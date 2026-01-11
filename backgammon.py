@@ -70,7 +70,7 @@ class BackgammonLogic:
         if not self.any_valid_moves():
             print(f"No valid moves for Player {self.turn}. Switching turn...")
             self.dice = []
-            self.switch_turn()
+            # self.switch_turn()
 
     def any_valid_moves(self):
         # sunt obligat sa mut piesa scoasa inapoi in joc
@@ -255,11 +255,31 @@ class BackgammonUI:
         self.dragged_piece_id = None
         self.drag_start_index = None
 
-        self.draw_board()
+        self.menu = True
+        self.ai_match = False
+
+        self.draw_menu()
+        # self.draw_board()
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
+
+    def draw_menu(self):
+        self.canvas.delete("all")
+        self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT, fill="#994f0a")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 200, text="Backgammon", fill="#CDCDCD", font=("Arial", 36, "bold"))
+        self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 - 75, WIDTH / 2 + 100, HEIGHT / 2 - 25, fill="#3f1405", outline="white", width=2, tags="menu_pvp")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 50, text="2 players game", fill="#aaaaaa", activefill="#f9fc4f", font=("Arial", 16, "bold"))
+        self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2, WIDTH / 2 + 100, HEIGHT / 2 + 50, fill="#3f1405", outline="white", width=2, tags="menu_ai")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 25, text="Play vs AI", fill="#aaaaaa", activefill="#f9fc4f", font=("Arial", 16, "bold"))
+
+    def start_game(self, ai_mode = False):
+        self.menu = False
+        self.ai_match = ai_mode
+        print(f"Game starting in mode ai mode: {ai_mode}")
+        self.game.init_board()
+        self.draw_board()
 
     def draw_board(self):
         self.canvas.delete("all")
@@ -269,10 +289,12 @@ class BackgammonUI:
         self.draw_dice()
 
         if not self.game.has_rolled:
-            self.draw_roll_dice_button()
-
+            if not (self.ai_match and self.game.turn == 1):
+                self.draw_roll_dice_button()
+        
         if self.game.has_rolled and not self.game.dice:
-            self.draw_done_button()
+            if not (self.ai_match and self.game.turn == 1):
+                self.draw_done_button()
 
         valid_destinations = []
         for move in self.valid_moves:
@@ -479,6 +501,22 @@ class BackgammonUI:
             return 23 - visual_col
 
     def on_press(self, event):
+        if self.menu:
+            clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            for item in clicked:
+                tags = self.canvas.gettags(item)
+                if "menu_pvp" in tags:
+                    self.start_game(ai_mode = False)
+                    return
+                elif "menu_ai" in tags:
+                    self.start_game(ai_mode = True)
+                    return
+            return
+        
+        #ignor click urile mele daca e tura ai ului
+        if self.ai_match and self.game.turn == 1:
+            return
+
         clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
         for item in clicked:
             tags = self.canvas.gettags(item)
@@ -489,6 +527,8 @@ class BackgammonUI:
             if "btn_done" in tags:
                 self.game.switch_turn()
                 self.draw_board()
+                if self.ai_match and self.game.turn == 1:
+                    self.root.after(1000, self.run_ai_turn)
                 return
 
         index = self.get_index_from_coords(event.x, event.y)
@@ -541,6 +581,12 @@ class BackgammonUI:
             self.canvas.coords(self.dragged_piece_id, event.x - CHECKER_RADIUS, event.y - CHECKER_RADIUS, event.x + CHECKER_RADIUS, event.y + CHECKER_RADIUS)
 
     def on_release(self, event):
+        if self.menu:
+            return
+        #ignor click urile mele daca e tura ai ului
+        if self.ai_match and self.game.turn == 1:
+            return
+
         if self.dragged_piece_id:
             self.canvas.delete(self.dragged_piece_id)
             self.dragged_piece_id = None
@@ -562,6 +608,57 @@ class BackgammonUI:
         self.selected_point = None
         self.valid_moves = []
         self.draw_board()
+
+    def run_ai_turn(self):
+        #verific daca e tura ai
+        if self.game.turn != 1:
+            return
+        
+        if not self.game.has_rolled:
+            self.game.roll_dice()
+            self.draw_board()
+            #freeze ca sa vada playeru ce zar a dat ai ul
+            self.root.after(1000, self.ai_perform_move)
+        else:
+            self.ai_perform_move()
+
+    def ai_perform_move(self):
+        possible_moves = []
+
+        if self.game.bar[1] > 0:
+            #daca are piese pe bara e obligat sa le mute primele, daca are pozitii permise
+            moves = self.game.get_valid_moves(-1) 
+            for target, path in moves:
+                possible_moves.append((-1, target, path))
+        else:
+            #daca nu are piese pe bara, atunci verific mutarile de pe tabla
+            for i in range(24):
+                if self.game.board[i] and self.game.board[i][0] == 1:
+                    moves = self.game.get_valid_moves(i)
+                    for target, path in moves:
+                        possible_moves.append((i, target, path))
+
+        #ai ul face o mutare random din cele permise gasite
+        if possible_moves:
+            move_to_execute = random.choice(possible_moves)
+            start, target, path = move_to_execute
+            print(f"AI moves from {start} to {target}")
+            self.game.move_piece(start, target, path)
+            self.draw_board()
+
+            if self.game.dice and self.game.any_valid_moves():
+                self.root.after(800, self.ai_perform_move)
+            else:
+                self.root.after(1000, self.ai_end_turn)
+        else:
+            print(f"No valid moves for Ai. Next turn")
+            self.root.after(1000, self.ai_end_turn)
+
+    def ai_end_turn(self):
+        self.game.switch_turn()
+        self.draw_board()
+
+
 
 if __name__ == "__main__":
     root = tk.Tk()
