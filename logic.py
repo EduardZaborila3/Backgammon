@@ -1,10 +1,15 @@
 import random
+import json
+from tkinter import messagebox
+import os
 
 class BackgammonLogic:
     def __init__(self):
         self.board = []
         for i in range(24):
             self.board.append([])
+        
+        self.match_score = [0, 0]
         self.bar = [0, 0]
         self.off = [0, 0]
         self.turn = 0
@@ -12,6 +17,9 @@ class BackgammonLogic:
         self.has_rolled = False
         self.game_over = False
         self.winner = -1
+        self.cube_value = 1
+        # initial nu are nimeni cubul
+        self.cube_owner = -1
         self.init_board()
 
     def init_board(self):
@@ -181,7 +189,7 @@ class BackgammonLogic:
             print(f"No valid moves for player {self.turn}. Dice lost")
             self.dice = []
 
-        if self.off[0] == 3 or self.off[1] == 3 and not self.dice:
+        if (self.off[0] == 3 or self.off[1] == 3) and not self.dice:
             if self.check_special_win() > -1:
                 self.winner = self.check_special_win()
                 self.end_game()
@@ -189,6 +197,27 @@ class BackgammonLogic:
         if self.off[self.turn] == 15:
             self.winner = self.turn
             self.end_game()
+
+    def get_ai_move(self):
+        possible_moves = []
+
+        if self.bar[1] > 0:
+            #daca are piese pe bara e obligat sa le mute primele, daca are pozitii permise
+            moves = self.get_valid_moves(-1) 
+            for target, path in moves:
+                possible_moves.append((-1, target, path))
+        else:
+            #daca nu are piese pe bara, atunci verific mutarile de pe tabla
+            for i in range(24):
+                if self.board[i] and self.board[i][0] == 1:
+                    moves = self.get_valid_moves(i)
+                    for target, path in moves:
+                        possible_moves.append((i, target, path))
+
+        #ai ul face o mutare random din cele permise gasite
+        if possible_moves:
+            return random.choice(possible_moves)
+        return None
 
     def can_bear_off(self, player_id):
         if self.bar[player_id] > 0:
@@ -224,28 +253,103 @@ class BackgammonLogic:
 
     # regula pt marti tehnic
     def check_special_win(self):
-        if self.bar[self.turn] == 0 and self.off[self.turn] == 3:
-            if self.turn == 0:
-                home_base_range = range(0, 6)
-            else:
-                home_base_range = range(18,24)
-            is_perfect = True
+        if not(self.bar[self.turn] == 0 and self.off[self.turn] == 3):
+            return -1
+        if self.turn == 0:
+            home_base_range = range(0, 6)
+        else:
+            home_base_range = range(18,24)
+        is_perfect = True
 
-            for i in home_base_range:
-                if self.board[i] and self.board[i][0] == self.turn:
-                    if len(self.board[i]) != 2:
-                        is_perfect = False
-                        break
+        for i in home_base_range:
+            if self.board[i] and self.board[i][0] == self.turn:
+                if len(self.board[i]) != 2:
+                    is_perfect = False
+                    break
         
         if is_perfect:
             return self.turn
         
         return -1
 
+    def calculate_points(self):
+        loser = 1 - self.winner
+        piece_in_winner_home = False
+        points = 1
+
+        # daca cel care pierde nu a apucat sa scoata vreo piesa e marti
+        if self.off[loser] == 0:
+            if self.winner == 0:
+                winner_home = range(0, 6)
+            else:
+                winner_home = range(18, 24)
+            # verific daca loser ul are piese in casa adversa
+            for i in winner_home:
+                if self.board[i] and self.board[i][0] == loser:
+                    piece_in_winner_home = True  
+
+            if self.bar[loser] > 0 or piece_in_winner_home:
+                points = 3
+            points = 2
+        points = 1
+
+        return points * self.cube_value
+    
+    def reset_game(self):
+        current_score = self.match_score
+        self.__init__()
+        self.match_score = current_score
 
     def end_game(self):
         self.game_over = True
+        points = self.calculate_points()
+        self.match_score[self.winner] += points
         if self.turn == 0:
             print("You won the match!")
         else:
             print("You lost the match!")
+
+    def save_game(self, filepath, ai_match):
+        state = {
+            "board": self.board,
+            "match_score": self.match_score,
+            "bar": self.bar,
+            "off": self.off,
+            "turn": self.turn,
+            "dice": self.dice,
+            "has_rolled": self.has_rolled,
+            "game_over": self.game_over,
+            "winner": self.winner,
+            "ai_match": ai_match,
+            "cube_value": self.cube_value,
+            "cube_owner": self.cube_owner
+        }
+
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(state, f, indent=4)
+            print("Game was successfully saved")
+            return True
+        except Exception as e:
+            print(f"Error while saving the game: {e}")
+            return False
+        
+    def load_game(self, filepath):
+        try:
+            with open(filepath, 'r') as f:
+                state = json.load(f)
+            self.board = state["board"]
+            self.match_score = state["match_score"]
+            self.bar = state["bar"]
+            self.off = state["off"]
+            self.turn = state["turn"]
+            self.dice = state["dice"]
+            self.has_rolled = state["has_rolled"]
+            self.game_over = state["game_over"]
+            self.winner = state["winner"]
+            self.cube_value = state.get("cube_value", 1)
+            self.cube_owner = state.get("cube_owner", -1)
+            return state.get("ai_match", False)
+        except Exception as e:
+            print(f"Error while loading the game: {e}")
+            return None

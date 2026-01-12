@@ -2,6 +2,9 @@ import tkinter as tk
 from logic import BackgammonLogic
 import random
 from constants import *
+import json
+from tkinter import messagebox
+import os
 
 class BackgammonUI:
     def __init__(self, root):
@@ -31,16 +34,21 @@ class BackgammonUI:
         self.canvas.delete("all")
         self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT, fill="#994f0a")
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 200, text="Backgammon", fill="#CDCDCD", font=("Arial", 36, "bold"))
+
         self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 - 75, WIDTH / 2 + 100, HEIGHT / 2 - 25, fill="#3f1405", outline="white", width=2, tags="menu_pvp")
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 50, text="2 players game", fill="#aaaaaa", activefill="#f9fc4f", font=("Arial", 16, "bold"))
+
         self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2, WIDTH / 2 + 100, HEIGHT / 2 + 50, fill="#3f1405", outline="white", width=2, tags="menu_ai")
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 25, text="Play vs AI", fill="#aaaaaa", activefill="#f9fc4f", font=("Arial", 16, "bold"))
+
+        self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 + 75, WIDTH / 2 + 100, HEIGHT / 2 + 125, fill="#3f1405", outline="white", width=2, tags="menu_load")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 100, text="Load Game", fill="#aaaaaa", activefill="#f9fc4f", font=("Arial", 16, "bold"), tags="menu_load")
 
     def start_game(self, ai_mode = False):
         self.menu = False
         self.ai_match = ai_mode
-        print(f"Game starting in mode ai mode: {ai_mode}")
-        self.game.init_board()
+        print(f"Game starting in ai mode: {ai_mode}")
+        self.game = BackgammonLogic()
         self.draw_board()
 
     def draw_board(self):
@@ -48,11 +56,14 @@ class BackgammonUI:
         
         self.canvas.create_rectangle(PLAY_AREA_START_X, PLAY_AREA_START_Y, LEFT_BOARD_END_X, PLAY_AREA_END_Y, fill=BOARD_COLOR, outline="black", width=2)
         self.canvas.create_rectangle(RIGHT_BOARD_START_X, PLAY_AREA_START_Y, PLAY_AREA_END_X, PLAY_AREA_END_Y, fill=BOARD_COLOR, outline="black", width=2)
+        self.draw_doubling_cube()
         self.draw_dice()
 
         if not self.game.has_rolled:
             if not (self.ai_match and self.game.turn == 1):
                 self.draw_roll_dice_button()
+                if self.game.cube_value < 64:
+                    self.draw_double_button()
         
         if self.game.has_rolled and not self.game.dice and not self.game.game_over:
             if not (self.ai_match and self.game.turn == 1):
@@ -171,6 +182,23 @@ class BackgammonUI:
         self.canvas.create_oval(680, y0, 730, y1, fill="blue", outline="black", tags="btn_roll")
         self.canvas.create_text(705, y0 - 25, fill="white", text="ROLL", font=("Arial", 10, "bold"), tags="btn_roll", activefill="#f08888")
 
+    def draw_double_button(self):
+        if self.game.has_rolled:
+            return
+            
+        if self.game.cube_owner != -1 and self.game.cube_owner != self.game.turn:
+            return
+        if self.ai_match and self.game.turn == 1:
+            return
+
+        x0 = WIDTH - 70
+        y0 = HEIGHT / 2 + 25
+        x1 = WIDTH - 20
+        y1 = HEIGHT / 2 - 25
+        
+        self.canvas.create_oval(x0, y0, x1, y1, fill="orange", outline="black", tags="btn_double")
+        self.canvas.create_text((x0+x1)/2, HEIGHT/2, text="2x", fill="black", activefill="#f63d84", font=("Arial", 14, "bold"), tags="btn_double")
+
     def draw_done_button(self):
         y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
         y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
@@ -178,6 +206,14 @@ class BackgammonUI:
         done_btn_x1 = 730
         self.canvas.create_rectangle(done_btn_x0, y0, done_btn_x1, y1, fill="#24A524", outline="black", tags="btn_done")
         self.canvas.create_text((done_btn_x0 + done_btn_x1)/2, HEIGHT/2, text="DONE", fill="white", font=("Arial", 10, "bold"), tags="btn_done", activefill="#f08888")
+
+    def draw_save_button(self):
+        self.canvas.create_rectangle(WIDTH - 110, BORDER_WIDTH / 2 - 15, WIDTH - 40, BORDER_WIDTH / 2 + 15, fill="green")
+        self.canvas.create_text(WIDTH - 75, BORDER_WIDTH / 2, text="SAVE", fill="white", activefill="gray", font=("Arial", 14, "bold"), tags="save_btn")
+
+    def draw_menu_button(self):
+        self.canvas.create_rectangle(110, 5, 40, 35, fill="blue")
+        self.canvas.create_text(75, BORDER_WIDTH / 2, text="MENU", fill="white", activefill="gray", font=("Arial", 14, "bold"), tags="menu_btn")
 
     def draw_info_and_bars(self):
         center_x =  WIDTH / 2
@@ -220,6 +256,29 @@ class BackgammonUI:
                 fill=COLOR_PLAYER1, outline="white", width=2)
             self.canvas.create_text(center_x, y_pos, text=f"{self.game.off[1]}", fill="#ffffff", font=("Arial", 18, "bold"))
 
+        self.draw_score()
+        self.draw_save_button()
+        self.draw_menu_button()
+
+    def draw_score(self):
+        self.canvas.create_text(WIDTH / 3 + 50, BORDER_WIDTH / 2, text=f"Player 0 (White) - {self.game.match_score[0]}", fill="white", font=("Arial", 14, "bold"))
+        self.canvas.create_text(WIDTH / 2 + 105, BORDER_WIDTH / 2, text=f"{self.game.match_score[1]} - Player 1 (Black)", fill="white", font=("Arial", 14, "bold"))
+
+    def draw_final_of_the_match(self, winner):
+        if winner == 0:
+            game_over_text = "You win!"
+            winner_color = "#6aff8a"
+        else:
+            winner_color = "#ff5656"
+            game_over_text = "You lose!"
+
+        self.canvas.create_rectangle(WIDTH / 2 - 220, HEIGHT / 2 - 120, WIDTH / 2 + 220, HEIGHT / 2 + 120, fill=winner_color, outline="black", width=2)
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 60, text=f"{game_over_text}", fill="black", font=("Arial", 36, "bold"))
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 15, text="Score", fill="#00095e", font=("Arial", 18, "bold"))
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 20, text=f"{self.game.match_score[0]} - {self.game.match_score[1]}", fill="#00095e", font=("Arial", 18, "bold"))
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 55, text=f"Player {self.game.winner} reached 5 points! The match is over", fill="black", font=("Arial", 14, "bold"))
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 90, text="Go back to menu", fill="black", activefill="#ff1f1f", font=("Arial", 18, "bold"), tags="menu_btn")
+
     def draw_game_over(self, winner):
         if winner == 0:
             game_over_text = "You win!"
@@ -227,8 +286,26 @@ class BackgammonUI:
         else:
             winner_color = "#ff5656"
             game_over_text = "You lose!"
-        self.canvas.create_rectangle(WIDTH / 2 - 120, HEIGHT / 2 - 30, WIDTH / 2 + 120, HEIGHT / 2 + 30, fill=winner_color, outline="black", width=2)
-        self.canvas.create_text(WIDTH / 2, HEIGHT / 2, text=f"{game_over_text}", fill="black", font=("Arial", 36, "bold"))
+            
+        self.canvas.create_rectangle(WIDTH / 2 - 130, HEIGHT / 2 - 120, WIDTH / 2 + 130, HEIGHT / 2 + 120, fill=winner_color, outline="black", width=2)
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 60, text=f"{game_over_text}", fill="black", font=("Arial", 36, "bold"))
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 15, text="Score", fill="#00095e", font=("Arial", 18, "bold"))
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 20, text=f"{self.game.match_score[0]} - {self.game.match_score[1]}", fill="#00095e", font=("Arial", 18, "bold"))
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 60, text="Play Again", fill="black", activefill="#ff1f1f", font=("Arial", 18, "bold"), tags="play_again")
+
+    def draw_doubling_cube(self):
+        x_pos = 21
+        
+        if self.game.cube_owner == -1:
+            y_pos = HEIGHT / 2  
+        elif self.game.cube_owner == 0: 
+            y_pos = HEIGHT - 100
+        else: 
+            y_pos = 100
+        size = 18
+        
+        self.canvas.create_rectangle(x_pos - size, y_pos - size, x_pos + size, y_pos + size, fill="#f0e68c", outline="black", width=3, tags="cube_visual")
+        self.canvas.create_text(x_pos, y_pos, text=str(self.game.cube_value), font=("Arial", 20, "bold"), fill="black", tags="cube_visual")
 
     def get_index_from_coords(self, x, y):
         if LEFT_BOARD_END_X < x < RIGHT_BOARD_START_X:
@@ -276,9 +353,6 @@ class BackgammonUI:
             return 23 - visual_col
 
     def on_press(self, event):
-        if self.game.game_over:
-            return
-        
         if self.menu:
             clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
             for item in clicked:
@@ -288,6 +362,20 @@ class BackgammonUI:
                     return
                 elif "menu_ai" in tags:
                     self.start_game(ai_mode = True)
+                    return
+                elif "menu_load" in tags:
+                    filename = "last_game.json"
+                    if not os.path.exists(filename):
+                        messagebox.showerror("No saved game was found")
+                        return
+                    ai_status = self.game.load_game(filename)
+                    if ai_status is not None:
+                        self.menu = False
+                        self.ai_match = ai_status
+                        self.draw_board()
+                        messagebox.showinfo("Success", "Last game session restored")
+                    else:
+                        messagebox.showerror("Error", "Corrupted save file")
                     return
             return
         
@@ -302,11 +390,60 @@ class BackgammonUI:
                 self.game.roll_dice()
                 self.draw_board()
                 return
-            if "btn_done" in tags:
+            elif "btn_done" in tags:
                 self.game.switch_turn()
                 self.draw_board()
                 if self.ai_match and self.game.turn == 1:
                     self.root.after(1000, self.run_ai_turn)
+                return
+            elif "play_again" in tags:
+                self.game.reset_game()
+                self.reset_selection()
+                return
+            elif "save_btn" in tags:
+                confirm = messagebox.askyesno("Confirm Save", "Are you sure you want to save this game? Maybe you'll want to continue later.")
+                if confirm:
+                    success = self.game.save_game("last_game.json", self.ai_match)
+                    if success:
+                        messagebox.showinfo("Saved", "Game state saved")
+                        self.draw_menu()
+                    else:
+                        messagebox.showerror("Error", "Could not save the game")
+                return
+            elif "menu_btn" in tags:
+                if not self.game.game_over:
+                    confirm = messagebox.askyesno("Navigate to menu", "Are you sure you want to go to the menu? If you want to continue the game later, you must save it first.")
+                    if confirm:
+                        self.menu = True
+                        self.draw_menu()
+                else:
+                    self.menu = True
+                    self.draw_menu()
+                return
+            elif "btn_double" in tags:
+                current_player = self.game.turn
+                opponent = 1 - current_player
+                new_cube_value = self.game.cube_value * 2
+                
+                if self.ai_match and current_player == 0:
+                    # ai ul accepta mereu dublajul
+                    messagebox.showinfo("Double Offered", f"AI accepts the double offer")
+                    accepted = True
+                else:
+                    accepted = messagebox.askyesno("Double Offered", f"Player {opponent}, do you accept the double to {new_cube_value}?\n\n"f"YES = Continue game with stakes x{new_cube_value}\n"f"NO = Resign game and lose {self.game.cube_value} points")
+
+                if accepted:
+                    self.game.cube_value = new_cube_value
+                    self.game.cube_owner = opponent
+                    self.draw_board()
+                else:
+                    self.game.winner = current_player
+                    self.game.end_game()
+                    if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                        self.draw_final_of_the_match(self.game.winner)
+                    else:
+                        self.draw_game_over(self.game.winner)
+                
                 return
 
         index = self.get_index_from_coords(event.x, event.y)
@@ -382,7 +519,10 @@ class BackgammonUI:
             self.drag_start_index = None
             self.draw_board()
             if self.game.game_over:
-                self.draw_game_over(self.game.winner)
+                if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                    self.draw_final_of_the_match(self.game.winner)
+                else:
+                    self.draw_game_over(self.game.winner)
 
     def reset_selection(self):
         self.selected_point = None
@@ -403,36 +543,26 @@ class BackgammonUI:
             self.ai_perform_move()
 
     def ai_perform_move(self):
-        possible_moves = []
+            move = self.game.get_ai_move()
+            if move:
+                start, target, path = move
+                print(f"AI moves from {start} to {target}")
+                self.game.move_piece(start, target, path)
+                self.draw_board()
 
-        if self.game.bar[1] > 0:
-            #daca are piese pe bara e obligat sa le mute primele, daca are pozitii permise
-            moves = self.game.get_valid_moves(-1) 
-            for target, path in moves:
-                possible_moves.append((-1, target, path))
-        else:
-            #daca nu are piese pe bara, atunci verific mutarile de pe tabla
-            for i in range(24):
-                if self.game.board[i] and self.game.board[i][0] == 1:
-                    moves = self.game.get_valid_moves(i)
-                    for target, path in moves:
-                        possible_moves.append((i, target, path))
+                if self.game.game_over:
+                    if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                        self.draw_final_of_the_match(self.game.winner)
+                    else:
+                        self.draw_game_over(self.game.winner)
 
-        #ai ul face o mutare random din cele permise gasite
-        if possible_moves:
-            move_to_execute = random.choice(possible_moves)
-            start, target, path = move_to_execute
-            print(f"AI moves from {start} to {target}")
-            self.game.move_piece(start, target, path)
-            self.draw_board()
-
-            if self.game.dice and self.game.any_valid_moves():
-                self.root.after(800, self.ai_perform_move)
+                if self.game.dice and self.game.any_valid_moves():
+                    self.root.after(800, self.ai_perform_move)
+                else:
+                    self.root.after(1000, self.ai_end_turn)
             else:
+                print(f"No valid moves for AI. Next turn")
                 self.root.after(1000, self.ai_end_turn)
-        else:
-            print(f"No valid moves for Ai. Next turn")
-            self.root.after(1000, self.ai_end_turn)
 
     def ai_end_turn(self):
         self.game.switch_turn()
