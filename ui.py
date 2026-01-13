@@ -118,7 +118,10 @@ class BackgammonUI:
                 x_base -= CENTER_BAR_WIDTH
             
             if i in valid_destinations:
-                color = HIGHLIGHT_COLOR
+                if len(self.game.board[i]) == 1:
+                    color = HINT_HIGHLIGHT_COLOR
+                else:
+                    color = HIGHLIGHT_COLOR
             elif i % 2 == 0:
                 color = POINT_COLOR_BLACK
             else:
@@ -483,6 +486,7 @@ class BackgammonUI:
                     success = self.game.save_game("last_game.json", self.ai_match)
                     if success:
                         messagebox.showinfo("Saved", "Game state saved")
+                        self.menu = True
                         self.draw_menu()
                     else:
                         messagebox.showerror("Error", "Could not save the game")
