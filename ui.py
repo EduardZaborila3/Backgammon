@@ -7,7 +7,18 @@ from tkinter import messagebox
 import os
 
 class BackgammonUI:
+    """
+    Manages the Graphical User Interface using Tkinter.
+    This class handles drawing the board, processing mouse events (clicks, drags), rendering animations, and managing UI state (menus, popups).
+    Attributes:
+        root (tk.Tk): The main Tkinter window instance
+        game (BackgammonLogic): The instance of the game logic
+        canvas (tk.Canvas): The drawing area for the board
+        valid_moves (list): Cache of valid moves for the currently selected piece
+        ai_match (bool): True if playing against the CPU, False for PvP
+    """
     def __init__(self, root):
+        """Initializes the UI components and binds event listeners."""
         self.game = BackgammonLogic()
         self.root = root
         
@@ -31,6 +42,7 @@ class BackgammonUI:
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
 
     def draw_menu(self):
+        """Draws the menu with game options"""
         self.canvas.delete("all")
         self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT, fill="#994f0a")
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 200, text="Backgammon", fill="#CDCDCD", font=("Arial", 36, "bold"))
@@ -45,6 +57,11 @@ class BackgammonUI:
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 100, text="Load Game", fill="#aaaaaa", activefill="#f9fc4f", font=("Arial", 16, "bold"), tags="menu_load")
 
     def start_game(self, ai_mode = False):
+        """
+        Starts the game
+        Args:
+            ai_mode: A flag that indicates if the game is PvP or PvAI
+        """
         self.menu = False
         self.ai_match = ai_mode
         print(f"Game starting in ai mode: {ai_mode}")
@@ -52,6 +69,12 @@ class BackgammonUI:
         self.draw_board()
 
     def draw_board(self):
+        """
+        Clears and redraws the entire game board.
+
+        This includes the triangles(points), checkers, dice, buttons (Roll, Undo, Done), and scoreboards based on the current self.game state.
+        Highlights valid destination triangles if a piece is selected.
+        """
         self.canvas.delete("all")
         
         self.canvas.create_rectangle(PLAY_AREA_START_X, PLAY_AREA_START_Y, LEFT_BOARD_END_X, PLAY_AREA_END_Y, fill=BOARD_COLOR, outline="black", width=2)
@@ -59,15 +82,13 @@ class BackgammonUI:
         self.draw_doubling_cube()
         self.draw_dice()
 
-        if not self.game.has_rolled:
-            if not (self.ai_match and self.game.turn == 1):
-                self.draw_roll_dice_button()
-                if self.game.cube_value < 64:
-                    self.draw_double_button()
-        
         if self.game.has_rolled and not self.game.dice and not self.game.game_over:
             if not (self.ai_match and self.game.turn == 1):
                 self.draw_done_button()
+
+        if self.game.has_rolled and self.game.history and not self.game.game_over:
+            if not (self.ai_match and self.game.turn == 1):
+                self.draw_undo_button()
 
         valid_destinations = []
         for move in self.valid_moves:
@@ -108,7 +129,14 @@ class BackgammonUI:
             self.draw_checkers(i, x_base, y_base, direction)
             self.draw_info_and_bars()
 
+            if not self.game.has_rolled:
+                if not (self.ai_match and self.game.turn == 1):
+                    self.draw_roll_dice_button()
+                    if self.game.cube_value < 64:
+                        self.draw_double_button()
+
     def draw_checkers(self, index, x, y_base, direction):
+        """Draws checkers on the board in the initial state"""
         checkers = self.game.board[index]
         if not checkers: 
             return
@@ -145,6 +173,7 @@ class BackgammonUI:
             self.canvas.create_oval(x - CHECKER_RADIUS, y_curr - CHECKER_RADIUS, x + CHECKER_RADIUS, y_curr + CHECKER_RADIUS, fill=color, outline=outline_color, width=width)
 
     def draw_dice(self):
+        """Draws the dice calling the draw_dice_dots function"""
         y0 = HEIGHT / 2 + (DICE_SIZE / 2)
         y1 = HEIGHT / 2 - (DICE_SIZE / 2)
         center_y = HEIGHT / 2
@@ -168,6 +197,7 @@ class BackgammonUI:
             self.draw_dice_dots(second_dice_center, center_y, self.game.dice[1])
 
     def draw_dice_dots(self, cx, cy, value):
+        """Draws the dots on the dices by calling the get_dice_dots function from logic.py"""
         dot_offset = DICE_SIZE / 4
         radius = 4
         for px, py in self.game.get_dice_dots(value):
@@ -176,6 +206,7 @@ class BackgammonUI:
             self.canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="black")
 
     def draw_roll_dice_button(self):
+        """Draws the button that triggers the dice roll"""
         ROLL_DICE_BTN_RADIUS = 50
         y0 = HEIGHT / 2 + (ROLL_DICE_BTN_RADIUS / 2)
         y1 = HEIGHT / 2 - (ROLL_DICE_BTN_RADIUS / 2)
@@ -183,6 +214,7 @@ class BackgammonUI:
         self.canvas.create_text(705, y0 - 25, fill="white", text="ROLL", font=("Arial", 10, "bold"), tags="btn_roll", activefill="#f08888")
 
     def draw_double_button(self):
+        """Draws the button that triggers doubling the prize"""
         if self.game.has_rolled:
             return
             
@@ -200,6 +232,7 @@ class BackgammonUI:
         self.canvas.create_text((x0+x1)/2, HEIGHT/2, text="2x", fill="black", activefill="#f63d84", font=("Arial", 14, "bold"), tags="btn_double")
 
     def draw_done_button(self):
+        """Draws the button that triggers the end of current turn"""
         y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
         y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
         done_btn_x0 = 680
@@ -207,15 +240,31 @@ class BackgammonUI:
         self.canvas.create_rectangle(done_btn_x0, y0, done_btn_x1, y1, fill="#24A524", outline="black", tags="btn_done")
         self.canvas.create_text((done_btn_x0 + done_btn_x1)/2, HEIGHT/2, text="DONE", fill="white", font=("Arial", 10, "bold"), tags="btn_done", activefill="#f08888")
 
+    def draw_undo_button(self):
+        """Draws the button that triggers undo move"""
+        if not self.game.history or self.game.game_over:
+            return
+        
+        y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
+        y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
+        undo_btn_x0 = 600
+        undo_btn_x1 = 660
+
+        self.canvas.create_oval(undo_btn_x0, y0, undo_btn_x1, y1, fill="#d1d1d1", outline="black", tags="btn_undo")
+        self.canvas.create_text((undo_btn_x0 + undo_btn_x1) / 2, (y0 + y1) /2, text="Undo", activefill="#b77145", font=("Arial", 10, "bold"), tags="btn_undo")
+
     def draw_save_button(self):
+        """Draws the button that triggers storing the game"""
         self.canvas.create_rectangle(WIDTH - 110, BORDER_WIDTH / 2 - 15, WIDTH - 40, BORDER_WIDTH / 2 + 15, fill="green")
         self.canvas.create_text(WIDTH - 75, BORDER_WIDTH / 2, text="SAVE", fill="white", activefill="gray", font=("Arial", 14, "bold"), tags="save_btn")
 
     def draw_menu_button(self):
+        """Draws the button that leads you back to the menu"""
         self.canvas.create_rectangle(110, 5, 40, 35, fill="blue")
         self.canvas.create_text(75, BORDER_WIDTH / 2, text="MENU", fill="white", activefill="gray", font=("Arial", 14, "bold"), tags="menu_btn")
 
     def draw_info_and_bars(self):
+        """Draws pop-up with info about the current turn and players that have checkers on the bar"""
         center_x =  WIDTH / 2
         center_y = HEIGHT / 2
         width = 100
@@ -261,10 +310,12 @@ class BackgammonUI:
         self.draw_menu_button()
 
     def draw_score(self):
+        """Draws score on the top border"""
         self.canvas.create_text(WIDTH / 3 + 50, BORDER_WIDTH / 2, text=f"Player 0 (White) - {self.game.match_score[0]}", fill="white", font=("Arial", 14, "bold"))
         self.canvas.create_text(WIDTH / 2 + 105, BORDER_WIDTH / 2, text=f"{self.game.match_score[1]} - Player 1 (Black)", fill="white", font=("Arial", 14, "bold"))
 
     def draw_final_of_the_match(self, winner):
+        """Draws the pop-up that announces the final of the match"""
         if winner == 0:
             game_over_text = "You win!"
             winner_color = "#6aff8a"
@@ -280,6 +331,7 @@ class BackgammonUI:
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 90, text="Go back to menu", fill="black", activefill="#ff1f1f", font=("Arial", 18, "bold"), tags="menu_btn")
 
     def draw_game_over(self, winner):
+        """Draws the pop-ups that announces the final of the game"""
         if winner == 0:
             game_over_text = "You win!"
             winner_color = "#6aff8a"
@@ -294,6 +346,7 @@ class BackgammonUI:
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 60, text="Play Again", fill="black", activefill="#ff1f1f", font=("Arial", 18, "bold"), tags="play_again")
 
     def draw_doubling_cube(self):
+        """Draws the doubling cube"""
         x_pos = 21
         
         if self.game.cube_owner == -1:
@@ -308,6 +361,11 @@ class BackgammonUI:
         self.canvas.create_text(x_pos, y_pos, text=str(self.game.cube_value), font=("Arial", 20, "bold"), fill="black", tags="cube_visual")
 
     def get_index_from_coords(self, x, y):
+        """
+        Translates pixel coordinates (x, y) into a logical board index.
+        Returns:
+            int or None: The board index (0-23), Bar, Off, or None if out of bounds.
+        """
         if LEFT_BOARD_END_X < x < RIGHT_BOARD_START_X:
             center_x = WIDTH / 2
             #verific daca alb incearca sa scoata piese
@@ -353,6 +411,14 @@ class BackgammonUI:
             return 23 - visual_col
 
     def on_press(self, event):
+        """
+        Handles mouse button press events.
+
+        Detects clicks on:
+        - Menu buttons (PvP, AI, Load)
+        - Game controls (Roll, Done, Undo, Save, Double)
+        - Checkers (to initiate a drag or select a piece)
+        """
         if self.menu:
             clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
             for item in clicked:
@@ -389,6 +455,17 @@ class BackgammonUI:
             if "btn_roll" in tags:
                 self.game.roll_dice()
                 self.draw_board()
+                if not self.game.any_valid_moves():
+                    print("No moves possible. Waiting 1.5s...")
+                    def handle_stuck_player():
+                        self.game.dice = []       
+                        self.game.switch_turn()   
+                        self.draw_board()         
+                        
+                        if self.ai_match and self.game.turn == 1:
+                            self.root.after(1000, self.run_ai_turn)
+                    self.root.after(1500, handle_stuck_player)
+                
                 return
             elif "btn_done" in tags:
                 self.game.switch_turn()
@@ -445,6 +522,11 @@ class BackgammonUI:
                         self.draw_game_over(self.game.winner)
                 
                 return
+            elif "btn_undo" in tags:
+                if self.game.undo_move():
+                    self.reset_selection()
+                    self.draw_board()
+                return
 
         index = self.get_index_from_coords(event.x, event.y)
 
@@ -496,6 +578,18 @@ class BackgammonUI:
             self.canvas.coords(self.dragged_piece_id, event.x - CHECKER_RADIUS, event.y - CHECKER_RADIUS, event.x + CHECKER_RADIUS, event.y + CHECKER_RADIUS)
 
     def on_release(self, event):
+        """
+        Handles the mouse button release event to finalize a drag-and-drop operation.
+        This method serves as the controller for executing player moves. It performs the following steps:
+        1. Guards against interaction if the menu is open or during the AI's turn
+        2. Cleans up the visual dragged piece artifact
+        3. Determines the drop target based on mouse coordinates
+        4. Validates if the drop target matches a legal move from the start position
+        5. Executes the move in the logic layer if valid
+        6. Redraws the board and checks for game over or win conditions
+        Args:
+            event (tk.Event): The Tkinter event object containing the release coordinates (x, y)
+        """
         if self.menu:
             return
         #ignor click urile mele daca e tura ai ului
@@ -525,11 +619,18 @@ class BackgammonUI:
                     self.draw_game_over(self.game.winner)
 
     def reset_selection(self):
+        """Resets the current selection"""
         self.selected_point = None
         self.valid_moves = []
         self.draw_board()
 
     def run_ai_turn(self):
+        """
+        Runs the AI turn:
+        1. Rolls dice.
+        2. Choses and performs a random move
+        4. Chains multiple moves if dice remain
+        """
         #verific daca e tura ai
         if self.game.turn != 1:
             return
@@ -543,6 +644,7 @@ class BackgammonUI:
             self.ai_perform_move()
 
     def ai_perform_move(self):
+            """Performs move chosen by get_ai_move() function from logic"""
             move = self.game.get_ai_move()
             if move:
                 start, target, path = move
@@ -565,5 +667,6 @@ class BackgammonUI:
                 self.root.after(1000, self.ai_end_turn)
 
     def ai_end_turn(self):
+        """Ends AI turn by automatically switching it and calls the draw_board() method"""
         self.game.switch_turn()
         self.draw_board()
