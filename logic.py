@@ -1,8 +1,9 @@
 import random
 import json
-from tkinter import messagebox
 import os
 import copy
+import torch
+import numpy as np
 
 class BackgammonLogic:
     """
@@ -54,7 +55,68 @@ class BackgammonLogic:
             self.board.append([])
         for index, player_id, count in setup:
             self.board[index] = [player_id] * count
-        print("Board Initialized")
+        # print("Board Initialized")
+
+    def get_state(self):
+        return {
+            "board": self.board,
+            "bar": self.bar,
+            "off": self.off,
+            "turn": self.turn,
+            "dice": self.dice,
+            "match_score": self.match_score
+        }
+
+    def get_board_vector(self, player_id):
+        """
+        Transforms the board in an array with 198 elements for the neural network. Codification is relative to 'player_id'
+        (always sees the board from its own perspective)
+        """
+        board_features = []
+        for i in range(24):
+            if player_id == 1:
+                actual_index = i
+            else:
+                actual_index = 23 - i
+
+            point = self.board[actual_index]
+            if point and point[0] == player_id:
+                my_checkers = len(point)
+            else:
+                my_checkers = 0
+
+            if point and point[0] == 1 - player_id:
+                opp_checkers = len(point)
+            else:
+                opp_checkers = 0
+
+            board_features.extend([
+                1 if my_checkers >= 1 else 0,
+                1 if my_checkers >= 2 else 0,
+                1 if my_checkers >= 3 else 0,
+                (my_checkers - 3) / 2.0 if my_checkers > 3 else 0
+            ])
+
+            board_features.extend([
+                1 if opp_checkers >= 1 else 0,
+                1 if opp_checkers >= 2 else 0,
+                1 if opp_checkers >= 3 else 0,
+                (opp_checkers - 3) / 2.0 if opp_checkers > 3 else 0
+            ])
+
+        # checkers on the bar
+        board_features.append(self.bar[player_id] / 2.0)
+        board_features.append(self.bar[1 - player_id] / 2.0)
+
+        #checkers taken off
+        board_features.append(self.off[player_id] / 2.0)
+        board_features.append(self.off[1 - player_id] / 2.0)
+
+        # turn
+        board_features.append(1.0 if self.turn == player_id else 0.0)
+        board_features.append(1.0 if self.turn != player_id else 0.0)
+
+        return torch.FloatTensor(board_features)
 
     def roll_dice(self):
         """
@@ -71,12 +133,7 @@ class BackgammonLogic:
             self.dice = [d1, d1, d1, d1]
         else:
             self.dice = [d1, d2]
-        print(f"Player {self.turn} rolled the dice: {self.dice}")
-
-        # if not self.any_valid_moves():
-        #     print(f"No valid moves for Player {self.turn}. Switching turn...")
-        #     self.dice = []
-        #     # self.switch_turn()
+        # print(f"Player {self.turn} rolled the dice: {self.dice}")
 
     def any_valid_moves(self):
         """Checks for any valid moves from every point"""
@@ -210,13 +267,13 @@ class BackgammonLogic:
         self.save_board_state()
         if start_index == 24 or start_index == -1:
             self.bar[self.turn] -= 1
-            print(f"Player {self.turn} entered from bar")
+            # print(f"Player {self.turn} entered from bar")
             p_id = self.turn
         else:
             p_id = self.board[start_index].pop()
         if target_index == -2 or target_index == 25:
             self.off[p_id] += 1
-            print(f"Player {p_id} sent a piece off. Total off: {self.off[p_id]}")
+            # print(f"Player {p_id} sent a piece off. Total off: {self.off[p_id]}")
             
         else:
             target_point = self.board[target_index]
@@ -224,7 +281,7 @@ class BackgammonLogic:
                 #daca mut peste o singura piesa adversa, o scot (pe bara)
                 hit_piece = target_point.pop()
                 self.bar[1 - p_id] += 1
-                print(f"Player {1-p_id} piece was sent to bar")
+                # print(f"Player {1-p_id} piece was sent to bar")
                 
             self.board[target_index].append(p_id)
         
@@ -233,11 +290,8 @@ class BackgammonLogic:
                 self.dice.remove(die)
 
         if self.dice and not self.any_valid_moves() and self.off[self.turn] < 15:
-            print(f"No valid moves for player {self.turn}. Dice lost")
-            def delay_dice_cleanup():
-                self.dice = []
-            self.root.after(1500, delay_dice_cleanup)
-            return
+            # print(f"No valid moves for player {self.turn}. Dice lost")
+            self.dice = []
 
         if (self.off[0] == 3 or self.off[1] == 3) and not self.dice:
             if self.check_special_win() > -1:
@@ -248,29 +302,107 @@ class BackgammonLogic:
             self.winner = self.turn
             self.end_game()
 
-    def get_ai_move(self):
+    def get_ai_move(self, model=None):
         """
         Finds all possible moves and choses a random one to execute.
         """
-        possible_moves = []
+        # possible_moves = []
+        #
+        # if self.bar[1] > 0:
+        #     #daca are piese pe bara e obligat sa le mute primele, daca are pozitii permise
+        #     moves = self.get_valid_moves(-1)
+        #     for target, path in moves:
+        #         possible_moves.append((-1, target, path))
+        # else:
+        #     #daca nu are piese pe bara, atunci verific mutarile de pe tabla
+        #     for i in range(24):
+        #         if self.board[i] and self.board[i][0] == 1:
+        #             moves = self.get_valid_moves(i)
+        #             for target, path in moves:
+        #                 possible_moves.append((i, target, path))
+        #
+        # #ai ul face o mutare random din cele permise gasite
+        # # if possible_moves:
+        # #     return random.choice(possible_moves)
+        # # return None
+        #
+        # if not possible_moves:
+        #     return None
+        #
+        # if model is None:
+        #     return random.choice(possible_moves)
+        #
+        # best_move = None
+        # best_value = -1.0
+        # for start, target, path in possible_moves:
+        #     cloned_game = BackgammonLogic()
+        #     cloned_game.board = copy.deepcopy(self.board)
+        #     cloned_game.bar = copy.deepcopy(self.bar)
+        #     cloned_game.off = copy.deepcopy(self.off)
+        #     cloned_game.turn = self.turn
+        #
+        #     cloned_game.move_piece(start, target, path)
+        #     board_vector = cloned_game.get_board_vector(player_id=1)
+        #
+        #     with torch.no_grad():
+        #         value = model(board_vector).item()
+        #
+        #     if value > best_value:
+        #         best_value = value
+        #         best_move = (start, target, path)
+        #
+        #     return best_move
 
-        if self.bar[1] > 0:
-            #daca are piese pe bara e obligat sa le mute primele, daca are pozitii permise
-            moves = self.get_valid_moves(-1) 
+        possible_moves = []
+        current_player = self.turn
+
+        if self.bar[current_player] > 0:
+            if current_player == 0:
+                start_idx = 24
+            else:
+                start_idx = -1
+            moves = self.get_valid_moves(start_idx)
             for target, path in moves:
-                possible_moves.append((-1, target, path))
+                possible_moves.append((start_idx, target, path))
         else:
-            #daca nu are piese pe bara, atunci verific mutarile de pe tabla
+            # daca nu are piese pe bara, atunci verific mutarile de pe tabla
             for i in range(24):
-                if self.board[i] and self.board[i][0] == 1:
+                if self.board[i] and self.board[i][0] == current_player:
                     moves = self.get_valid_moves(i)
                     for target, path in moves:
                         possible_moves.append((i, target, path))
 
-        #ai ul face o mutare random din cele permise gasite
-        if possible_moves:
+        # ai ul face o mutare random din cele permise gasite
+        # if possible_moves:
+        #     return random.choice(possible_moves)
+        # return None
+
+        if not possible_moves:
+            return None
+
+        if model is None:
             return random.choice(possible_moves)
-        return None
+
+        best_move = None
+        best_value = -1.0
+        for start, target, path in possible_moves:
+            cloned_game = BackgammonLogic()
+            cloned_game.board = copy.deepcopy(self.board)
+            cloned_game.bar = copy.deepcopy(self.bar)
+            cloned_game.off = copy.deepcopy(self.off)
+            cloned_game.turn = self.turn
+
+            cloned_game.move_piece(start, target, path)
+            board_vector = cloned_game.get_board_vector(player_id=1)
+
+            with torch.no_grad():
+                value = model(board_vector).item()
+
+            if value > best_value:
+                best_value = value
+                best_move = (start, target, path)
+
+            return best_move
 
     def can_bear_off(self, player_id):
         """
@@ -306,7 +438,7 @@ class BackgammonLogic:
         self.turn = 1 - self.turn
         self.dice = []
         self.has_rolled = False
-        print(f"Turn switched. Now player {self.turn}")
+        # print(f"Turn switched. Now player {self.turn}")
 
     # regula pt marti tehnic
     def check_special_win(self):
@@ -370,10 +502,11 @@ class BackgammonLogic:
         self.game_over = True
         points = self.calculate_points()
         self.match_score[self.winner] += points
-        if self.turn == 0:
-            print("You won the match!")
-        else:
-            print("You lost the match!")
+        # TODO: Decomenteaza asta dupa antrenament
+        # if self.turn == 0:
+        #     print("You won the match!")
+        # else:
+        #     print("You lost the match!")
 
     def save_game(self, filepath, ai_match):
         """

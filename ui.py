@@ -5,6 +5,8 @@ from constants import *
 import json
 from tkinter import messagebox
 import os
+import torch
+from ai import *
 
 class BackgammonUI:
     """
@@ -21,6 +23,10 @@ class BackgammonUI:
         """Initializes the UI components and binds event listeners."""
         self.game = BackgammonLogic()
         self.root = root
+
+        self.sio = None
+        self.my_player_id = None
+        self.is_multiplayer = False
         
         self.canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, bg=BORDER_COLOR)
         self.canvas.pack()
@@ -36,6 +42,8 @@ class BackgammonUI:
 
         self.draw_menu()
         # self.draw_board()
+
+        self.waiting_for_skip = False
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
@@ -56,6 +64,11 @@ class BackgammonUI:
         self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 + 75, WIDTH / 2 + 100, HEIGHT / 2 + 125, fill="#3f1405", outline="white", width=2, tags="menu_load")
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 100, text="Load Game", fill="#aaaaaa", activefill="#f9fc4f", font=("Arial", 16, "bold"), tags="menu_load")
 
+        self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 + 150, WIDTH / 2 + 100, HEIGHT / 2 + 200,
+                                     fill="#1c5c16", outline="white", width=2, tags="menu_online")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 175, text="Play Online", fill="#aaaaaa", activefill="#f9fc4f",
+                                font=("Arial", 16, "bold"), tags="menu_online")
+
     def start_game(self, ai_mode = False):
         """
         Starts the game
@@ -66,7 +79,60 @@ class BackgammonUI:
         self.ai_match = ai_mode
         print(f"Game starting in ai mode: {ai_mode}")
         self.game = BackgammonLogic()
+
+        if ai_mode:
+            try:
+                self.ai_model = TGGammonNetwork()
+                model_path = "models/ai_2000.pth"
+                self.ai_model.load_state_dict(torch.load(model_path, weights_only=True))
+                self.ai_model.eval()
+                print(f"AI Model '{model_path}' was successfully loaded!")
+            except Exception as e:
+                print(f"Error loading AI model: {e}")
+                print("Fallback! AI will move random.")
+                self.ai_model = None
+        else:
+            self.ai_model = None
+
         self.draw_board()
+
+    def sync_state_from_server(self, state):
+        self.game.board = state['board']
+        self.game.bar = state['bar']
+        self.game.off = state['off']
+        self.game.turn = state['turn']
+        self.game.dice = state['dice']
+        self.game.match_score = state['match_score']
+        self.game.game_over = state.get('game_over', False)
+        self.game.winner = state.get('winner', -1)
+        self.game.cube_value = state.get('cube_value', 1)
+        self.game.cube_owner = state.get('cube_owner', -1)
+        self.game.history = state.get('history', [])
+        self.game.has_rolled = state.get('has_rolled', False)
+
+        self.draw_board()
+
+        if self.is_multiplayer and self.game.turn == self.my_player_id:
+            if self.game.dice and not self.game.any_valid_moves():
+                if not self.waiting_for_skip:
+                    self.waiting_for_skip = True
+                    print("No moves possible. Switching turn...")
+
+                    def skip_turn():
+                        print("1.5 sec passed. Sending 'skip_turn' to the server...")
+                        self.sio.emit('skip_turn', {'player': self.my_player_id})
+                        self.waiting_for_skip = False
+
+                    self.root.after(1500, skip_turn)
+            else:
+                self.waiting_for_skip = False
+
+        if self.game.game_over:
+            if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                self.draw_final_of_the_match(self.game.winner)
+            else:
+                self.draw_game_over(self.game.winner)
+                self.sio.emit('game_over', {'winner': self.game.winner})
 
     def draw_board(self):
         """
@@ -184,12 +250,13 @@ class BackgammonUI:
         first_dice_x1 = 790
         second_dice_x0 = 800
         second_dice_x1 = 850
+
         self.canvas.create_rectangle(first_dice_x0, y0, first_dice_x1, y1, fill="white", outline="black")
         self.canvas.create_rectangle(second_dice_x0, y0, second_dice_x1, y1, fill="white", outline="black")
 
         if not self.game.dice:
             return
-        
+
         first_dice_center = first_dice_x0 + (first_dice_x1 - first_dice_x0) / 2
         second_dice_center = second_dice_x0 + (second_dice_x1 - second_dice_x0) / 2
 
@@ -201,6 +268,7 @@ class BackgammonUI:
 
     def draw_dice_dots(self, cx, cy, value):
         """Draws the dots on the dices by calling the get_dice_dots function from logic.py"""
+        # if self.game.turn == self.my_player_id:
         dot_offset = DICE_SIZE / 4
         radius = 4
         for px, py in self.game.get_dice_dots(value):
@@ -210,6 +278,8 @@ class BackgammonUI:
 
     def draw_roll_dice_button(self):
         """Draws the button that triggers the dice roll"""
+        if self.is_multiplayer and self.game.turn != self.my_player_id:
+            return
         ROLL_DICE_BTN_RADIUS = 50
         y0 = HEIGHT / 2 + (ROLL_DICE_BTN_RADIUS / 2)
         y1 = HEIGHT / 2 - (ROLL_DICE_BTN_RADIUS / 2)
@@ -218,24 +288,27 @@ class BackgammonUI:
 
     def draw_double_button(self):
         """Draws the button that triggers doubling the prize"""
-        if self.game.has_rolled:
-            return
-            
-        if self.game.cube_owner != -1 and self.game.cube_owner != self.game.turn:
-            return
-        if self.ai_match and self.game.turn == 1:
-            return
+        if self.game.turn == self.my_player_id:
+            if self.game.has_rolled:
+                return
 
-        x0 = WIDTH - 70
-        y0 = HEIGHT / 2 + 25
-        x1 = WIDTH - 20
-        y1 = HEIGHT / 2 - 25
-        
-        self.canvas.create_oval(x0, y0, x1, y1, fill="orange", outline="black", tags="btn_double")
-        self.canvas.create_text((x0+x1)/2, HEIGHT/2, text="2x", fill="black", activefill="#f63d84", font=("Arial", 14, "bold"), tags="btn_double")
+            if self.game.cube_owner != -1 and self.game.cube_owner != self.game.turn:
+                return
+            if self.ai_match and self.game.turn == 1:
+                return
+
+            x0 = WIDTH - 70
+            y0 = HEIGHT / 2 + 25
+            x1 = WIDTH - 20
+            y1 = HEIGHT / 2 - 25
+
+            self.canvas.create_oval(x0, y0, x1, y1, fill="orange", outline="black", tags="btn_double")
+            self.canvas.create_text((x0+x1)/2, HEIGHT/2, text="2x", fill="black", activefill="#f63d84", font=("Arial", 14, "bold"), tags="btn_double")
 
     def draw_done_button(self):
         """Draws the button that triggers the end of current turn"""
+        if self.is_multiplayer and self.game.turn != self.my_player_id:
+            return
         y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
         y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
         done_btn_x0 = 680
@@ -245,21 +318,23 @@ class BackgammonUI:
 
     def draw_undo_button(self):
         """Draws the button that triggers undo move"""
-        if not self.game.history or self.game.game_over:
-            return
-        
-        y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
-        y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
-        undo_btn_x0 = 600
-        undo_btn_x1 = 660
+        if self.game.turn == self.my_player_id:
+            if not self.game.history or self.game.game_over:
+                return
 
-        self.canvas.create_oval(undo_btn_x0, y0, undo_btn_x1, y1, fill="#d1d1d1", outline="black", tags="btn_undo")
-        self.canvas.create_text((undo_btn_x0 + undo_btn_x1) / 2, (y0 + y1) /2, text="Undo", activefill="#b77145", font=("Arial", 10, "bold"), tags="btn_undo")
+            y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
+            y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
+            undo_btn_x0 = 600
+            undo_btn_x1 = 660
+
+            self.canvas.create_oval(undo_btn_x0, y0, undo_btn_x1, y1, fill="#d1d1d1", outline="black", tags="btn_undo")
+            self.canvas.create_text((undo_btn_x0 + undo_btn_x1) / 2, (y0 + y1) /2, text="Undo", activefill="#b77145", font=("Arial", 10, "bold"), tags="btn_undo")
 
     def draw_save_button(self):
         """Draws the button that triggers storing the game"""
-        self.canvas.create_rectangle(WIDTH - 110, BORDER_WIDTH / 2 - 15, WIDTH - 40, BORDER_WIDTH / 2 + 15, fill="green")
-        self.canvas.create_text(WIDTH - 75, BORDER_WIDTH / 2, text="SAVE", fill="white", activefill="gray", font=("Arial", 14, "bold"), tags="save_btn")
+        if not self.is_multiplayer:
+            self.canvas.create_rectangle(WIDTH - 110, BORDER_WIDTH / 2 - 15, WIDTH - 40, BORDER_WIDTH / 2 + 15, fill="green")
+            self.canvas.create_text(WIDTH - 75, BORDER_WIDTH / 2, text="SAVE", fill="white", activefill="gray", font=("Arial", 14, "bold"), tags="save_btn")
 
     def draw_menu_button(self):
         """Draws the button that leads you back to the menu"""
@@ -277,11 +352,23 @@ class BackgammonUI:
             turn_text = "White (P0)"
         else:
             turn_text = "Black (P1)"
-        self.canvas.create_rectangle(center_x-width, center_y-height, center_x+width, center_y+height, fill="#7A711C", outline="black")
-        if self.game.turn == 0:
-            self.canvas.create_text(center_x, center_y, text=f"Turn: White", font=("Arial", 14, "bold"), fill="white")
-        else:
-            self.canvas.create_text(center_x, center_y, text=f"Turn: Black", font=("Arial", 14, "bold"), fill="black")
+        # self.canvas.create_rectangle(center_x-width, center_y-height, center_x+width, center_y+height, fill="#7A711C", outline="black")
+        # if self.game.turn == 0:
+        #     self.canvas.create_text(center_x, center_y, text=f"Turn: White", font=("Arial", 14, "bold"), fill="white")
+        # else:
+        #     self.canvas.create_text(center_x, center_y, text=f"Turn: Black", font=("Arial", 14, "bold"), fill="black")
+
+        is_my_turn = (self.is_multiplayer and self.game.turn == self.my_player_id) or (not self.is_multiplayer and self.game.turn == 0)
+        if is_my_turn:
+            self.canvas.create_rectangle(center_x - width, center_y - height, center_x + width, center_y + height,
+                                         fill="#7A711C", outline="black")
+            if self.waiting_for_skip:
+                    self.canvas.create_text(center_x, center_y, text=f"No moves", font=("Arial", 14, "bold"), fill="red")
+                    return
+            if self.my_player_id == 0:
+                self.canvas.create_text(center_x, center_y, text=f"Your Turn", font=("Arial", 14, "bold"), fill="white")
+            else:
+                self.canvas.create_text(center_x, center_y, text=f"Your Turn", font=("Arial", 14, "bold"), fill="black")
 
         for k in range(self.game.bar[0]):
             y_pos = center_y - 100
@@ -319,7 +406,7 @@ class BackgammonUI:
 
     def draw_final_of_the_match(self, winner):
         """Draws the pop-up that announces the final of the match"""
-        if winner == 0:
+        if winner == self.my_player_id:
             game_over_text = "You win!"
             winner_color = "#6aff8a"
         else:
@@ -446,41 +533,73 @@ class BackgammonUI:
                     else:
                         messagebox.showerror("Error", "Corrupted save file")
                     return
+                elif "menu_online" in tags:
+                    if not self.sio or not getattr(self.sio, 'connected', False):
+                        messagebox.showerror("Connection Error", "Unable to connect to the server for online play. Please check your connection and try again.")
+                        return
+                    self.menu = False
+                    self.is_multiplayer = True
+                    self.ai_match = False
+                    if self.sio:
+                        self.sio.emit('join_matchmaking')
+                    self.canvas.delete("all")
+                    self.canvas.create_text(WIDTH / 2, HEIGHT / 2, text="Waiting for opponent...", fill="white",
+                                            font=("Arial", 24))
+                    return
             return
         
         #ignor click urile mele daca e tura ai ului
         if self.ai_match and self.game.turn == 1:
+            return
+        if self.is_multiplayer and self.game.turn != self.my_player_id:
             return
 
         clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
         for item in clicked:
             tags = self.canvas.gettags(item)
             if "btn_roll" in tags:
-                self.game.roll_dice()
-                self.draw_board()
-                if not self.game.any_valid_moves():
-                    print("No moves possible. Waiting 1.5s...")
-                    def handle_stuck_player():
-                        self.game.dice = []       
-                        self.game.switch_turn()   
-                        self.draw_board()         
-                        
-                        if self.ai_match and self.game.turn == 1:
-                            self.root.after(1000, self.run_ai_turn)
-                    self.root.after(1500, handle_stuck_player)
-                
-                return
+                if self.is_multiplayer:
+                    self.sio.emit('roll_dice')
+                else:
+                    self.game.roll_dice()
+                    self.draw_board()
+                    if not self.game.any_valid_moves():
+                        print("No moves possible. Waiting 1.5s...")
+
+                        def handle_stuck_player():
+                            self.game.dice = []
+                            self.game.switch_turn()
+                            self.draw_board()
+
+                            if self.ai_match and self.game.turn == 1:
+                                self.root.after(1000, self.run_ai_turn)
+
+                        self.root.after(1500, handle_stuck_player)
+                    return
+
             elif "btn_done" in tags:
-                self.game.switch_turn()
-                self.draw_board()
-                if self.ai_match and self.game.turn == 1:
-                    self.root.after(1000, self.run_ai_turn)
-                return
+                if self.is_multiplayer:
+                    self.sio.emit('end_turn')
+                else:
+                    self.game.switch_turn()
+                    self.draw_board()
+                    if self.ai_match and self.game.turn == 1:
+                        self.root.after(1000, self.run_ai_turn)
+                    return
+
             elif "play_again" in tags:
-                self.game.reset_game()
-                self.reset_selection()
-                return
+                if self.is_multiplayer:
+                    self.sio.emit("play_again")
+                else:
+                    self.game.reset_game()
+                    self.reset_selection()
+                    return
+
             elif "save_btn" in tags:
+                if self.is_multiplayer:
+                    messagebox.showinfo("Info", "You cannot save online matches.")
+                    return
+
                 confirm = messagebox.askyesno("Confirm Save", "Are you sure you want to save this game? Maybe you'll want to continue later.")
                 if confirm:
                     success = self.game.save_game("last_game.json", self.ai_match)
@@ -492,45 +611,61 @@ class BackgammonUI:
                         messagebox.showerror("Error", "Could not save the game")
                 return
             elif "menu_btn" in tags:
-                if not self.game.game_over:
-                    confirm = messagebox.askyesno("Navigate to menu", "Are you sure you want to go to the menu? If you want to continue the game later, you must save it first.")
+                if self.is_multiplayer:
+                    confirm = messagebox.askyesno("Leave Match",
+                                                  "Are you sure you want to leave? You will forfeit the current online match.")
                     if confirm:
+                        self.sio.emit('leave_match')
+                        self.is_multiplayer = False
                         self.menu = True
                         self.draw_menu()
                 else:
-                    self.menu = True
-                    self.draw_menu()
-                return
-            elif "btn_double" in tags:
-                current_player = self.game.turn
-                opponent = 1 - current_player
-                new_cube_value = self.game.cube_value * 2
-                
-                if self.ai_match and current_player == 0:
-                    # ai ul accepta mereu dublajul
-                    messagebox.showinfo("Double Offered", f"AI accepts the double offer")
-                    accepted = True
-                else:
-                    accepted = messagebox.askyesno("Double Offered", f"Player {opponent}, do you accept the double to {new_cube_value}?\n\n"f"YES = Continue game with stakes x{new_cube_value}\n"f"NO = Resign game and lose {self.game.cube_value} points")
-
-                if accepted:
-                    self.game.cube_value = new_cube_value
-                    self.game.cube_owner = opponent
-                    self.draw_board()
-                else:
-                    self.game.winner = current_player
-                    self.game.end_game()
-                    if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
-                        self.draw_final_of_the_match(self.game.winner)
+                    if not self.game.game_over:
+                        confirm = messagebox.askyesno("Navigate to menu",
+                                                      "Are you sure you want to go to the menu? If you want to continue the game later, you must save it first.")
+                        if confirm:
+                            self.menu = True
+                            self.draw_menu()
                     else:
-                        self.draw_game_over(self.game.winner)
-                
-                return
+                        self.menu = True
+                        self.draw_menu()
+                    return
+            elif "btn_double" in tags:
+                if self.is_multiplayer:
+                    self.sio.emit('offer_double')
+                else:
+                    current_player = self.game.turn
+                    opponent = 1 - current_player
+                    new_cube_value = self.game.cube_value * 2
+
+                    if self.ai_match and current_player == 0:
+                        # ai ul accepta mereu dublajul
+                        messagebox.showinfo("Double Offered", f"AI accepts the double offer")
+                        accepted = True
+                    else:
+                        accepted = messagebox.askyesno("Double Offered", f"Player {opponent}, do you accept the double to {new_cube_value}?\n\n"f"YES = Continue game with stakes x{new_cube_value}\n"f"NO = Resign game and lose {self.game.cube_value} points")
+
+                    if accepted:
+                        self.game.cube_value = new_cube_value
+                        self.game.cube_owner = opponent
+                        self.draw_board()
+                    else:
+                        self.game.winner = current_player
+                        self.game.end_game()
+                        if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                            self.draw_final_of_the_match(self.game.winner)
+                        else:
+                            self.draw_game_over(self.game.winner)
+
+                    return
             elif "btn_undo" in tags:
-                if self.game.undo_move():
-                    self.reset_selection()
-                    self.draw_board()
-                return
+                if self.is_multiplayer:
+                    self.sio.emit('undo_move')
+                else:
+                    if self.game.undo_move():
+                        self.reset_selection()
+                        self.draw_board()
+                    return
 
         index = self.get_index_from_coords(event.x, event.y)
 
@@ -582,45 +717,47 @@ class BackgammonUI:
             self.canvas.coords(self.dragged_piece_id, event.x - CHECKER_RADIUS, event.y - CHECKER_RADIUS, event.x + CHECKER_RADIUS, event.y + CHECKER_RADIUS)
 
     def on_release(self, event):
-        """
-        Handles the mouse button release event to finalize a drag-and-drop operation.
-        This method serves as the controller for executing player moves. It performs the following steps:
-        1. Guards against interaction if the menu is open or during the AI's turn
-        2. Cleans up the visual dragged piece artifact
-        3. Determines the drop target based on mouse coordinates
-        4. Validates if the drop target matches a legal move from the start position
-        5. Executes the move in the logic layer if valid
-        6. Redraws the board and checks for game over or win conditions
-        Args:
-            event (tk.Event): The Tkinter event object containing the release coordinates (x, y)
-        """
         if self.menu:
             return
-        #ignor click urile mele daca e tura ai ului
+
         if self.ai_match and self.game.turn == 1:
+            return
+        if self.is_multiplayer and self.game.turn != self.my_player_id:
             return
 
         if self.dragged_piece_id:
             self.canvas.delete(self.dragged_piece_id)
             self.dragged_piece_id = None
-            
+
             target_index = self.get_index_from_coords(event.x, event.y)
-            move_executed = False
+
             if target_index is not None and target_index != self.drag_start_index:
                 for move in self.valid_moves:
                     if move[0] == target_index:
-                        self.game.move_piece(self.drag_start_index, target_index, move[1])
-                        move_executed = True
-                        self.reset_selection()
+                        if self.is_multiplayer:
+                            print(f"Sending move to the server: {self.drag_start_index} -> {target_index}")
+                            self.sio.emit('make_move', {
+                                'start': self.drag_start_index,
+                                'target': target_index,
+                                'used_dice': move[1]
+                            })
+                            self.reset_selection()
+                        else:
+                            self.game.move_piece(self.drag_start_index, target_index, move[1])
+                            self.reset_selection()
+                            self.draw_board()
+
+                            if self.game.game_over:
+                                if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                                    self.draw_final_of_the_match(self.game.winner)
+                                else:
+                                    self.draw_game_over(self.game.winner)
                         break
-            
+
             self.drag_start_index = None
-            self.draw_board()
-            if self.game.game_over:
-                if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
-                    self.draw_final_of_the_match(self.game.winner)
-                else:
-                    self.draw_game_over(self.game.winner)
+
+            if not self.is_multiplayer:
+                self.draw_board()
 
     def reset_selection(self):
         """Resets the current selection"""
@@ -649,7 +786,7 @@ class BackgammonUI:
 
     def ai_perform_move(self):
             """Performs move chosen by get_ai_move() function from logic"""
-            move = self.game.get_ai_move()
+            move = self.game.get_ai_move(self.ai_model)
             if move:
                 start, target, path = move
                 print(f"AI moves from {start} to {target}")
