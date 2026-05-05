@@ -1,8 +1,8 @@
 import torch.nn as nn
 
-class TGGammonNetwork(nn.Module):
+class TDGammonNetwork(nn.Module):
     def __init__(self):
-        super(TGGammonNetwork, self).__init__()
+        super(TDGammonNetwork, self).__init__()
         self.hidden = nn.Sequential(
             nn.Linear(198, 256),
             nn.ReLU(),

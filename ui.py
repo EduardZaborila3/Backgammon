@@ -82,7 +82,7 @@ class BackgammonUI:
 
         if ai_mode:
             try:
-                self.ai_model = TGGammonNetwork()
+                self.ai_model = TDGammonNetwork()
                 model_path = "models/ai_2000.pth"
                 self.ai_model.load_state_dict(torch.load(model_path, weights_only=True))
                 self.ai_model.eval()
@@ -318,17 +318,16 @@ class BackgammonUI:
 
     def draw_undo_button(self):
         """Draws the button that triggers undo move"""
-        if self.game.turn == self.my_player_id:
-            if not self.game.history or self.game.game_over:
-                return
+        if self.is_multiplayer and self.game.turn != self.my_player_id:
+            return
 
-            y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
-            y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
-            undo_btn_x0 = 600
-            undo_btn_x1 = 660
+        y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
+        y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
+        undo_btn_x0 = 600
+        undo_btn_x1 = 660
 
-            self.canvas.create_oval(undo_btn_x0, y0, undo_btn_x1, y1, fill="#d1d1d1", outline="black", tags="btn_undo")
-            self.canvas.create_text((undo_btn_x0 + undo_btn_x1) / 2, (y0 + y1) /2, text="Undo", activefill="#b77145", font=("Arial", 10, "bold"), tags="btn_undo")
+        self.canvas.create_oval(undo_btn_x0, y0, undo_btn_x1, y1, fill="#d1d1d1", outline="black", tags="btn_undo")
+        self.canvas.create_text((undo_btn_x0 + undo_btn_x1) / 2, (y0 + y1) /2, text="Undo", activefill="#b77145", font=("Arial", 10, "bold"), tags="btn_undo")
 
     def draw_save_button(self):
         """Draws the button that triggers storing the game"""
@@ -406,12 +405,21 @@ class BackgammonUI:
 
     def draw_final_of_the_match(self, winner):
         """Draws the pop-up that announces the final of the match"""
-        if winner == self.my_player_id:
-            game_over_text = "You win!"
+        if self.is_multiplayer:
+            did_i_win = (winner == self.my_player_id)
+            win_text = "You win!"
+            lose_text = "You lose!"
+        else:
+            did_i_win = (winner == 0)
+            win_text = "You lose!"
+            lose_text = "You win!"
+
+        if did_i_win:
+            game_over_text = win_text
             winner_color = "#6aff8a"
         else:
+            game_over_text = lose_text
             winner_color = "#ff5656"
-            game_over_text = "You lose!"
 
         self.canvas.create_rectangle(WIDTH / 2 - 220, HEIGHT / 2 - 120, WIDTH / 2 + 220, HEIGHT / 2 + 120, fill=winner_color, outline="black", width=2)
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 60, text=f"{game_over_text}", fill="black", font=("Arial", 36, "bold"))
@@ -422,12 +430,21 @@ class BackgammonUI:
 
     def draw_game_over(self, winner):
         """Draws the pop-ups that announces the final of the game"""
-        if winner == 0:
-            game_over_text = "You win!"
+        if self.is_multiplayer:
+            did_i_win = (winner == self.my_player_id)
+            win_text = "You win!"
+            lose_text = "You lose!"
+        else:
+            did_i_win = (winner == 0)
+            win_text = "You lose!"
+            lose_text = "You win!"
+
+        if did_i_win:
+            game_over_text = win_text
             winner_color = "#6aff8a"
         else:
+            game_over_text = lose_text
             winner_color = "#ff5656"
-            game_over_text = "You lose!"
             
         self.canvas.create_rectangle(WIDTH / 2 - 130, HEIGHT / 2 - 120, WIDTH / 2 + 130, HEIGHT / 2 + 120, fill=winner_color, outline="black", width=2)
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 60, text=f"{game_over_text}", fill="black", font=("Arial", 36, "bold"))

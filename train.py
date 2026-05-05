@@ -3,12 +3,25 @@ import torch.nn as nn
 import torch.optim as optim
 from logic import BackgammonLogic
 from ai import *
+import os
+import random
 
 def train_ai():
-    EPISODES = 2000
-    LEARNING_RATE = 0.01
+    EPISODES = 80000
+    LEARNING_RATE = 0.001
+    EPSILON = 0.05
 
-    model = TGGammonNetwork()
+    model = TDGammonNetwork()
+
+    model_path = "/content/drive/MyDrive/BackgammonAI/ai_100000.pth"
+    if os.path.exists(model_path):
+        model.load_state_dict(torch.load(model_path, weights_only=True))
+        print(f"SUCCES: Model loaded from {model_path}!")
+        print("Training phase 2")
+    else:
+        print(f"Error: I dont find the file {model_path}!")
+        print("Training stopped")
+
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.MSELoss()
 
@@ -28,6 +41,11 @@ def train_ai():
                 continue
             current_player = game.turn
             move = game.get_ai_move(model)
+
+            if random.random() < EPSILON:
+                move = game.get_ai_move(None)
+            else:
+                move = game.get_ai_move(model)
 
             if move:
                 start, target, path = move
@@ -70,11 +88,11 @@ def train_ai():
             optimizer.step()
 
         if (episode + 1) % 100 == 0:
-            print(f"Episode: {episode + 1}, last winner: {game.winner}")
+            print(f"Episode: {episode + 20001}, last winner: {game.winner}")
 
-        if (episode + 1) % 1000 == 0:
-            torch.save(model.state_dict(), f"models/ai_{episode + 1}.pth")
-            print(f"Model saved for the game {episode + 1}!")
+        if (episode + 1) % 2000 == 0:
+            torch.save(model.state_dict(), f"/content/drive/MyDrive/BackgammonAI/ai_{episode + 20001}.pth")
+            print(f"Model saved to Drive for the game {episode + 20001}!")
 
     print("Finished training.")
 if __name__ == "__main__":

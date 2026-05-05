@@ -67,6 +67,20 @@ class BackgammonLogic:
             "match_score": self.match_score
         }
 
+    def clone_state(self):
+        """Clones the state of the game in a more efficient way avoiding 'copy.deepcopy' using list comprehension"""
+        cloned = BackgammonLogic()
+        cloned.board = [list(point) for point in self.board]
+
+        cloned.bar = list(self.bar)
+        cloned.off = list(self.off)
+        cloned.turn = self.turn
+        cloned.dice = list(self.dice)
+
+        cloned.save_board_state = lambda: None
+
+        return cloned
+
     def get_board_vector(self, player_id):
         """
         Transforms the board in an array with 198 elements for the neural network. Codification is relative to 'player_id'
@@ -383,26 +397,22 @@ class BackgammonLogic:
         if model is None:
             return random.choice(possible_moves)
 
-        best_move = None
-        best_value = -1.0
+        board_tensors = []
+        valid_moves_list = []
+
         for start, target, path in possible_moves:
-            cloned_game = BackgammonLogic()
-            cloned_game.board = copy.deepcopy(self.board)
-            cloned_game.bar = copy.deepcopy(self.bar)
-            cloned_game.off = copy.deepcopy(self.off)
-            cloned_game.turn = self.turn
-
+            cloned_game = self.clone_state()
             cloned_game.move_piece(start, target, path)
-            board_vector = cloned_game.get_board_vector(player_id=1)
 
-            with torch.no_grad():
-                value = model(board_vector).item()
+            board_tensors.append(cloned_game.get_board_vector(player_id=current_player))
+            valid_moves_list.append((start, target, path))
 
-            if value > best_value:
-                best_value = value
-                best_move = (start, target, path)
+        batch_tensor = torch.stack(board_tensors)
+        with torch.no_grad():
+            values = model(batch_tensor).squeeze(1)
 
-            return best_move
+        best_index = torch.argmax(values).item()
+        return valid_moves_list[best_index]
 
     def can_bear_off(self, player_id):
         """
