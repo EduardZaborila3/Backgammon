@@ -1,0 +1,4 @@
+aiohttp
+python-socketio
+numpy
+torch --index-url https://download.pytorch.org/whl/cpu

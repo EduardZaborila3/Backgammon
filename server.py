@@ -166,6 +166,8 @@ async def leave_match(sid):
         await sio.leave_room(sid, room_id)
 
 if __name__ == '__main__':
-    print("Server started on port 5555...")
-    web.run_app(app, port=5555)
+    import os
+    port = int(os.environ.get('PORT', 5555))
+    print(f"Server started on port {port}...")
+    web.run_app(app, host='0.0.0.0', port=port)
 

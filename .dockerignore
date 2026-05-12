@@ -1,0 +1,13 @@
+__pycache__/
+.git/
+.idea/
+models/
+main.py
+ui.py
+train.py
+ai.py
+constants.py
+build/
+dist/
+main.spec
+last_game.json
