@@ -18,7 +18,7 @@ class BackgammonLogic:
         cube_value (int): Current value of the doubling cube.
         cube_owner (int): Owner of the cube (-1 default).
     """
-    def __init__(self):
+    def __init__(self, skip_initial_roll=False):
         """Initializes the game state, ressetting board, dice and score."""
         self.board = []
         for i in range(24):
@@ -37,6 +37,25 @@ class BackgammonLogic:
         # initial nu are nimeni cubul
         self.cube_owner = -1
         self.init_board()
+
+        if not skip_initial_roll:
+            self.determine_starting_player()
+
+    def determine_starting_player(self):
+        """Roll a dice for every player. The one that gets the bigger dice starts"""
+        while True:
+            d0 = random.randint(1, 6)
+            d1 = random.randint(1, 6)
+            if d0 != d1:
+                break
+
+        if d0 > d1:
+            self.turn = 0
+            self.dice = [d0, d1]
+        else:
+            self.turn = 1
+            self.dice = [d1, d0]
+        self.has_rolled = True
 
     def init_board(self):
         """Sets up the initial checker positions."""
@@ -67,7 +86,7 @@ class BackgammonLogic:
 
     def clone_state(self):
         """Clones the state of the game in a more efficient way avoiding 'copy.deepcopy' using list comprehension"""
-        cloned = BackgammonLogic()
+        cloned = BackgammonLogic(skip_initial_roll=True)
         cloned.board = [list(point) for point in self.board]
 
         cloned.bar = list(self.bar)
@@ -441,11 +460,11 @@ class BackgammonLogic:
         self.game_over = True
         points = self.calculate_points()
         self.match_score[self.winner] += points
-        # TODO: Decomenteaza asta dupa antrenament
-        # if self.turn == 0:
-        #     print("You won the match!")
-        # else:
-        #     print("You lost the match!")
+        # TODO: This must be commented when training the model
+        if self.turn == 0:
+            print("You won the match!")
+        else:
+            print("You lost the match!")
 
     def save_game(self, filepath, ai_match):
         """
