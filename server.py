@@ -201,6 +201,36 @@ async def play_again(sid):
 
 
 @sio.event
+async def offer_double(sid):
+    if sid not in players: return
+    p_info = players[sid]
+    room_id = p_info['room']
+    game = games[room_id]
+
+    if game.turn == p_info['color']:
+        new_value = game.cube_value * 2
+        await sio.emit('receive_double_offer', {'new_value': new_value}, room=room_id, skip_sid=sid)
+
+
+@sio.event
+async def respond_double(sid, data):
+    if sid not in players: return
+    p_info = players[sid]
+    room_id = p_info['room']
+    game = games[room_id]
+
+    accepted = data.get('accept')
+
+    if accepted:
+        game.cube_value *= 2
+        game.cube_owner = p_info['color']
+        await sio.emit('game_state_update', get_game_state(game), room=room_id)
+    else:
+        game.winner = 1 - p_info['color']
+        game.end_game()
+        await sio.emit('game_state_update', get_game_state(game), room=room_id)
+
+@sio.event
 async def leave_match(sid):
     if sid in players:
         room_id = players[sid]['room']
