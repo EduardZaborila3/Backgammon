@@ -13,14 +13,23 @@ waiting_player = None
 games = {}
 players = {}
 
-ai_model = TDGammonNetwork()
+ai_model_medium = TDGammonNetwork()
 try:
-    ai_model.load_state_dict(torch.load("models/ai_100000.pth", weights_only=True))
-    ai_model.eval()
-    print("AI Model loaded successfully on the server!")
+    ai_model_medium.load_state_dict(torch.load("models/ai_20000.pth", weights_only=True))
+    ai_model_medium.eval()
+    print("Medium AI Model (20k) loaded successfully!")
 except Exception as e:
-    print(f"Error loading AI model on server: {e}")
-    ai_model = None
+    print(f"Error loading medium AI model: {e}")
+    ai_model_medium = None
+
+ai_model_hard = TDGammonNetwork()
+try:
+    ai_model_hard.load_state_dict(torch.load("models/ai_100000.pth", weights_only=True))
+    ai_model_hard.eval()
+    print("Hard AI Model (100k) loaded successfully!")
+except Exception as e:
+    print(f"Error loading hard AI model: {e}")
+    ai_model_hard = None
 
 def get_game_state(game):
     return {
@@ -120,6 +129,7 @@ async def skip_turn(sid, data):
 
 @sio.event
 async def request_ai_move(sid, state_data):
+    difficulty = state_data.get('difficulty', 'hard')
     print(f"[{sid}] Server is calculating AI move...")
 
     temp_game = BackgammonLogic()
@@ -129,7 +139,15 @@ async def request_ai_move(sid, state_data):
     temp_game.turn = state_data['turn']
     temp_game.dice = state_data['dice']
 
-    best_move = calculate_best_move(temp_game, ai_model)
+    match difficulty:
+        case "easy":
+            chosen_model = None
+        case "medium":
+            chosen_model = ai_model_medium
+        case "hard":
+            chosen_model = ai_model_hard
+
+    best_move = calculate_best_move(temp_game, chosen_model)
 
     await sio.emit('ai_move_response', {'move': best_move}, to=sid)
 
@@ -196,7 +214,6 @@ if __name__ == '__main__':
     # print("Server started on port 5555...")
     # web.run_app(app, port=5555)
     import os
-    torch.load("models/ai_100000.pth", weights_only=True)
     port = int(os.environ.get('PORT', 5555))
     print(f"Server started on port {port}...")
     web.run_app(app, host='0.0.0.0', port=port)

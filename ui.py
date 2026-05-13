@@ -37,6 +37,10 @@ class BackgammonUI:
 
         self.menu = True
         self.ai_match = False
+        self.ai_difficulty = "hard"
+
+        self.show_split_dice = False
+        self._multiplayer_split_done = False
 
         self.draw_menu()
         # self.draw_board()
@@ -67,7 +71,38 @@ class BackgammonUI:
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 175, text="Play Online", fill="#aaaaaa", activefill="#f9fc4f",
                                 font=("Arial", 16, "bold"), tags="menu_online")
 
-    def start_game(self, ai_mode = False):
+    def draw_difficulty_menu(self):
+        """Draws the sub-menu for AI difficulty selection"""
+        self.canvas.delete("all")
+        self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT, fill="#994f0a")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 200, text="Select AI Difficulty", fill="#CDCDCD",
+                                font=("Arial", 36, "bold"))
+
+        # Easy btn
+        self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 - 100, WIDTH / 2 + 100, HEIGHT / 2 - 50,
+                                     fill="#24A524", outline="white", width=2, tags="btn_diff_easy")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 75, text="Easy", fill="white", activefill="black",
+                                font=("Arial", 16, "bold"), tags="btn_diff_easy")
+
+        # Medium btn
+        self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 - 25, WIDTH / 2 + 100, HEIGHT / 2 + 25,
+                                     fill="#d1a102", outline="white", width=2, tags="btn_diff_medium")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2, text="Medium", fill="white", activefill="black",
+                                font=("Arial", 16, "bold"), tags="btn_diff_medium")
+
+        # hard btn
+        self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 + 50, WIDTH / 2 + 100, HEIGHT / 2 + 100,
+                                     fill="#a52424", outline="white", width=2, tags="btn_diff_hard")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 75, text="Hard", fill="white", activefill="black",
+                                font=("Arial", 16, "bold"), tags="btn_diff_hard")
+
+        # back btn
+        self.canvas.create_rectangle(WIDTH / 2 - 100, HEIGHT / 2 + 150, WIDTH / 2 + 100, HEIGHT / 2 + 200,
+                                     fill="#3f1405", outline="white", width=2, tags="btn_diff_back")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 175, text="Back to Menu", fill="#aaaaaa",
+                                activefill="#f9fc4f", font=("Arial", 16, "bold"), tags="btn_diff_back")
+
+    def start_game(self, ai_mode = False, ai_difficulty = "hard"):
         """
         Starts the game
         Args:
@@ -75,6 +110,7 @@ class BackgammonUI:
         """
         self.menu = False
         self.ai_match = ai_mode
+        self.ai_difficulty = ai_difficulty
         print(f"Game starting in ai mode: {ai_mode}")
         self.game = BackgammonLogic()
         self.ai_model = None
@@ -88,7 +124,9 @@ class BackgammonUI:
                 self.draw_menu()
                 return
 
+        self.show_split_dice = True
         self.draw_board()
+        self.root.after(3000, self.end_split_dice)
 
     def sync_state_from_server(self, state):
         self.game.board = state['board']
@@ -103,6 +141,13 @@ class BackgammonUI:
         self.game.cube_owner = state.get('cube_owner', -1)
         self.game.history = state.get('history', [])
         self.game.has_rolled = state.get('has_rolled', False)
+
+        is_opening_roll = not self.game.history and not state.get('history', []) and sum(self.game.off) == 0 and sum(self.game.bar) == 0 and self.game.has_rolled
+
+        if is_opening_roll and not self._multiplayer_split_done:
+            self.show_split_dice = True
+            self._multiplayer_split_done = True
+            self.root.after(3000, self.end_split_dice)
 
         self.draw_board()
 
@@ -127,6 +172,13 @@ class BackgammonUI:
             else:
                 self.draw_game_over(self.game.winner)
                 self.sio.emit('game_over', {'winner': self.game.winner})
+
+    def end_split_dice(self):
+        """Ends dice splitting and brings the dice side by side in the starting player side of the table"""
+        self.show_split_dice = False
+        self.draw_board()
+        if self.ai_match and self.game.turn == 1:
+            self.root.after(500, self.ai_perform_move)
 
     def draw_board(self):
         """
@@ -236,29 +288,49 @@ class BackgammonUI:
             self.canvas.create_oval(x - CHECKER_RADIUS, y_curr - CHECKER_RADIUS, x + CHECKER_RADIUS, y_curr + CHECKER_RADIUS, fill=color, outline=outline_color, width=width)
 
     def draw_dice(self):
-        """Draws the dice calling the draw_dice_dots function"""
-        y0 = HEIGHT / 2 + (DICE_SIZE / 2)
-        y1 = HEIGHT / 2 - (DICE_SIZE / 2)
-        center_y = HEIGHT / 2
-        first_dice_x0 = 740
-        first_dice_x1 = 790
-        second_dice_x0 = 800
-        second_dice_x1 = 850
-
-        self.canvas.create_rectangle(first_dice_x0, y0, first_dice_x1, y1, fill="white", outline="black")
-        self.canvas.create_rectangle(second_dice_x0, y0, second_dice_x1, y1, fill="white", outline="black")
-
+        """Draws the dice. Handles left/right positioning and opening roll split."""
         if not self.game.dice:
             return
 
-        first_dice_center = first_dice_x0 + (first_dice_x1 - first_dice_x0) / 2
-        second_dice_center = second_dice_x0 + (second_dice_x1 - second_dice_x0) / 2
+        y0 = HEIGHT / 2 + (DICE_SIZE / 2)
+        y1 = HEIGHT / 2 - (DICE_SIZE / 2)
+        center_y = HEIGHT / 2
 
-        if len(self.game.dice) >= 1:
-            self.draw_dice_dots(first_dice_center, center_y, self.game.dice[0])
+        my_id = self.my_player_id if self.is_multiplayer else 0
+        opp_id = 1 - my_id
 
-        if len(self.game.dice) >= 2:
-            self.draw_dice_dots(second_dice_center, center_y, self.game.dice[1])
+        if self.show_split_dice and len(self.game.dice) == 2:
+            winner = self.game.turn
+            winner_die = self.game.dice[0]
+            loser_die = self.game.dice[1]
+
+            if winner == my_id:
+                my_die = winner_die
+                opp_die = loser_die
+            else:
+                my_die = loser_die
+                opp_die = winner_die
+
+            opp_x0 = 160
+            self.canvas.create_rectangle(opp_x0, y0, opp_x0 + DICE_SIZE, y1, fill="white", outline="black")
+            self.draw_dice_dots(opp_x0 + (DICE_SIZE / 2), center_y, opp_die)
+
+            my_x0 = 740
+            self.canvas.create_rectangle(my_x0, y0, my_x0 + DICE_SIZE, y1, fill="white", outline="black")
+            self.draw_dice_dots(my_x0 + (DICE_SIZE / 2), center_y, my_die)
+
+        else:
+            if self.game.turn == my_id:
+                base_x = 740
+            else:
+                base_x = 90
+
+            num_dice_to_draw = min(2, len(self.game.dice))
+
+            for i in range(num_dice_to_draw):
+                x0 = base_x + i * 60
+                self.canvas.create_rectangle(x0, y0, x0 + DICE_SIZE, y1, fill="white", outline="black")
+                self.draw_dice_dots(x0 + (DICE_SIZE / 2), center_y, self.game.dice[i])
 
     def draw_dice_dots(self, cx, cy, value):
         """Draws the dots on the dices by calling the get_dice_dots function from logic.py"""
@@ -340,28 +412,38 @@ class BackgammonUI:
         center_y = HEIGHT / 2
         width = 100
         height = 15
-        
-        if self.game.turn == 0:
-            turn_text = "White (P0)"
-        else:
-            turn_text = "Black (P1)"
-        # self.canvas.create_rectangle(center_x-width, center_y-height, center_x+width, center_y+height, fill="#7A711C", outline="black")
-        # if self.game.turn == 0:
-        #     self.canvas.create_text(center_x, center_y, text=f"Turn: White", font=("Arial", 14, "bold"), fill="white")
-        # else:
-        #     self.canvas.create_text(center_x, center_y, text=f"Turn: Black", font=("Arial", 14, "bold"), fill="black")
 
-        is_my_turn = (self.is_multiplayer and self.game.turn == self.my_player_id) or (not self.is_multiplayer and self.game.turn == 0)
-        if is_my_turn:
-            self.canvas.create_rectangle(center_x - width, center_y - height, center_x + width, center_y + height,
-                                         fill="#7A711C", outline="black")
-            if self.waiting_for_skip:
-                    self.canvas.create_text(center_x, center_y, text=f"No moves", font=("Arial", 14, "bold"), fill="red")
-                    return
-            if self.my_player_id == 0:
-                self.canvas.create_text(center_x, center_y, text=f"Your Turn", font=("Arial", 14, "bold"), fill="white")
+        self.canvas.create_rectangle(center_x - width, center_y - height, center_x + width, center_y + height,
+                                     fill="#7A711C", outline="black")
+
+        if self.waiting_for_skip:
+            self.canvas.create_text(center_x, center_y, text="No moves", font=("Arial", 14, "bold"), fill="red")
+        else:
+            if self.is_multiplayer:
+                if self.game.turn == self.my_player_id:
+                    text_color = "white" if self.my_player_id == 0 else "black"
+                    self.canvas.create_text(center_x, center_y, text="Your Turn", font=("Arial", 14, "bold"),
+                                            fill=text_color)
+                else:
+                    text_color = "black" if self.my_player_id == 0 else "white"
+                    self.canvas.create_text(center_x, center_y, text="Opponent's Turn", font=("Arial", 14, "bold"),
+                                            fill=text_color)
+
+            elif self.ai_match:
+                if self.game.turn == 0:
+                    self.canvas.create_text(center_x, center_y, text="Your Turn", font=("Arial", 14, "bold"),
+                                            fill="white")
+                else:
+                    self.canvas.create_text(center_x, center_y, text="AI's Turn", font=("Arial", 14, "bold"),
+                                            fill="black")
+
             else:
-                self.canvas.create_text(center_x, center_y, text=f"Your Turn", font=("Arial", 14, "bold"), fill="black")
+                if self.game.turn == 0:
+                    self.canvas.create_text(center_x, center_y, text="Turn: White", font=("Arial", 14, "bold"),
+                                            fill="white")
+                else:
+                    self.canvas.create_text(center_x, center_y, text="Turn: Black", font=("Arial", 14, "bold"),
+                                            fill="black")
 
         for k in range(self.game.bar[0]):
             y_pos = center_y - 100
@@ -405,8 +487,8 @@ class BackgammonUI:
             lose_text = "You lose!"
         else:
             did_i_win = (winner == 0)
-            win_text = "You lose!"
-            lose_text = "You win!"
+            win_text = "You win!"
+            lose_text = "You lose!"
 
         if did_i_win:
             game_over_text = win_text
@@ -430,8 +512,8 @@ class BackgammonUI:
             lose_text = "You lose!"
         else:
             did_i_win = (winner == 0)
-            win_text = "You lose!"
-            lose_text = "You win!"
+            win_text = "You win!"
+            lose_text = "You lose!"
 
         if did_i_win:
             game_over_text = win_text
@@ -528,7 +610,19 @@ class BackgammonUI:
                     self.start_game(ai_mode = False)
                     return
                 elif "menu_ai" in tags:
-                    self.start_game(ai_mode = True)
+                    self.draw_difficulty_menu()
+                    return
+                elif "btn_diff_easy" in tags:
+                    self.start_game(ai_mode=True, difficulty="easy")
+                    return
+                elif "btn_diff_medium" in tags:
+                    self.start_game(ai_mode=True, difficulty="medium")
+                    return
+                elif "btn_diff_hard" in tags:
+                    self.start_game(ai_mode=True, difficulty="hard")
+                    return
+                elif "btn_diff_back" in tags:
+                    self.draw_menu()
                     return
                 elif "menu_load" in tags:
                     filename = "last_game.json"
@@ -560,10 +654,11 @@ class BackgammonUI:
             return
         
         #ignor click urile mele daca e tura ai ului
-        if self.ai_match and self.game.turn == 1:
-            return
-        if self.is_multiplayer and self.game.turn != self.my_player_id:
-            return
+        if not self.game.game_over:
+            if self.ai_match and self.game.turn == 1:
+                return
+            if self.is_multiplayer and self.game.turn != self.my_player_id:
+                return
 
         clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
         for item in clicked:
@@ -600,10 +695,17 @@ class BackgammonUI:
 
             elif "play_again" in tags:
                 if self.is_multiplayer:
+                    self._multiplayer_split_done = False
                     self.sio.emit("play_again")
                 else:
                     self.game.reset_game()
                     self.reset_selection()
+                    # if self.ai_match and self.game.turn == 1:
+                    #     self.root.after(1000, self.ai_perform_move)
+                    # return
+                    self.show_split_dice = True
+                    self.draw_board()
+                    self.root.after(2000, self.end_split_dice)
                     return
 
             elif "save_btn" in tags:
@@ -678,6 +780,9 @@ class BackgammonUI:
                         self.draw_board()
                     return
 
+        if self.game.game_over:
+            return
+
         index = self.get_index_from_coords(event.x, event.y)
 
         if index is None:
@@ -690,6 +795,12 @@ class BackgammonUI:
                     self.game.move_piece(self.selected_point, index, move[1])
                     self.reset_selection()
                     self.draw_board()
+                    if not self.is_multiplayer and self.game.game_over:
+                        if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                            self.draw_final_of_the_match(self.game.winner)
+                        else:
+                            self.draw_game_over(self.game.winner)
+
                     return
 
         if index is not None:
@@ -763,6 +874,8 @@ class BackgammonUI:
                                     self.draw_final_of_the_match(self.game.winner)
                                 else:
                                     self.draw_game_over(self.game.winner)
+                                self.drag_start_index = None
+                                return
                         break
 
             self.drag_start_index = None
@@ -805,7 +918,8 @@ class BackgammonUI:
 
                 # Sends current state of the table to the server to check
             state = self.game.get_state()
-            print("Sending move to the server to check the AI move...")
+            state['difficulty'] = self.ai_difficulty
+            print(f"Sending move to server (Difficulty -> {self.ai_difficulty})")
             self.sio.emit('request_ai_move', state)
 
     def apply_ai_move_from_server(self, data):

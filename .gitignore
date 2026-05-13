@@ -2,6 +2,7 @@
 
 models/ai_*.pth
 !models/ai_100000.pth
+!models/ai_20000.pth
 
 dist/
 build/
