@@ -2,8 +2,6 @@ import random
 import json
 import os
 import copy
-import torch
-import numpy as np
 
 class BackgammonLogic:
     """
@@ -80,57 +78,6 @@ class BackgammonLogic:
         cloned.save_board_state = lambda: None
 
         return cloned
-
-    def get_board_vector(self, player_id):
-        """
-        Transforms the board in an array with 198 elements for the neural network. Codification is relative to 'player_id'
-        (always sees the board from its own perspective)
-        """
-        board_features = []
-        for i in range(24):
-            if player_id == 1:
-                actual_index = i
-            else:
-                actual_index = 23 - i
-
-            point = self.board[actual_index]
-            if point and point[0] == player_id:
-                my_checkers = len(point)
-            else:
-                my_checkers = 0
-
-            if point and point[0] == 1 - player_id:
-                opp_checkers = len(point)
-            else:
-                opp_checkers = 0
-
-            board_features.extend([
-                1 if my_checkers >= 1 else 0,
-                1 if my_checkers >= 2 else 0,
-                1 if my_checkers >= 3 else 0,
-                (my_checkers - 3) / 2.0 if my_checkers > 3 else 0
-            ])
-
-            board_features.extend([
-                1 if opp_checkers >= 1 else 0,
-                1 if opp_checkers >= 2 else 0,
-                1 if opp_checkers >= 3 else 0,
-                (opp_checkers - 3) / 2.0 if opp_checkers > 3 else 0
-            ])
-
-        # checkers on the bar
-        board_features.append(self.bar[player_id] / 2.0)
-        board_features.append(self.bar[1 - player_id] / 2.0)
-
-        #checkers taken off
-        board_features.append(self.off[player_id] / 2.0)
-        board_features.append(self.off[1 - player_id] / 2.0)
-
-        # turn
-        board_features.append(1.0 if self.turn == player_id else 0.0)
-        board_features.append(1.0 if self.turn != player_id else 0.0)
-
-        return torch.FloatTensor(board_features)
 
     def roll_dice(self):
         """
@@ -394,25 +341,7 @@ class BackgammonLogic:
         if not possible_moves:
             return None
 
-        if model is None:
-            return random.choice(possible_moves)
-
-        board_tensors = []
-        valid_moves_list = []
-
-        for start, target, path in possible_moves:
-            cloned_game = self.clone_state()
-            cloned_game.move_piece(start, target, path)
-
-            board_tensors.append(cloned_game.get_board_vector(player_id=current_player))
-            valid_moves_list.append((start, target, path))
-
-        batch_tensor = torch.stack(board_tensors)
-        with torch.no_grad():
-            values = model(batch_tensor).squeeze(1)
-
-        best_index = torch.argmax(values).item()
-        return valid_moves_list[best_index]
+        return random.choice(possible_moves)
 
     def can_bear_off(self, player_id):
         """

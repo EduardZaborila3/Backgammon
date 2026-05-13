@@ -2,6 +2,7 @@ import socketio
 from aiohttp import web
 from logic import BackgammonLogic
 import uuid
+import torch
 
 sio = socketio.AsyncServer(cors_allowed_origins='*')
 app = web.Application()
@@ -166,7 +167,10 @@ async def leave_match(sid):
         await sio.leave_room(sid, room_id)
 
 if __name__ == '__main__':
+    # print("Server started on port 5555...")
+    # web.run_app(app, port=5555)
     import os
+    torch.load("models/ai_100000.pth", weights_only=True)
     port = int(os.environ.get('PORT', 5555))
     print(f"Server started on port {port}...")
     web.run_app(app, host='0.0.0.0', port=port)

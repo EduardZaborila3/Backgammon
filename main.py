@@ -7,7 +7,8 @@ import socketio
 from ui import BackgammonUI
 from constants import *
 
-SERVER_URL = "https://electrodialitic-peyton-calorifacient.ngrok-free.dev"
+# SERVER_URL = "https://electrodialitic-peyton-calorifacient.ngrok-free.dev"
+SERVER_URL = "https://server-table-ro.onrender.com"
 
 message_queue = queue.Queue()
 
@@ -26,6 +27,10 @@ def disconnect():
 @sio.on('assign_player')
 def on_assign_player(data):
     message_queue.put(("assign", data))
+
+@sio.on('ai_move_response')
+def on_ai_move_response(data):
+    message_queue.put(("ai_move", data))
 
 
 @sio.on('game_state_update')
@@ -75,6 +80,9 @@ def process_messages(root, app):
 
             elif msg_type == "game_state_update":
                 app.sync_state_from_server(data)
+
+            elif msg_type == "ai_move":
+                app.apply_ai_move_from_server(data)
 
 
     except queue.Empty:

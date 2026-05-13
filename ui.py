@@ -5,8 +5,6 @@ from constants import *
 import json
 from tkinter import messagebox
 import os
-import torch
-from ai import *
 
 class BackgammonUI:
     """
@@ -79,20 +77,16 @@ class BackgammonUI:
         self.ai_match = ai_mode
         print(f"Game starting in ai mode: {ai_mode}")
         self.game = BackgammonLogic()
+        self.ai_model = None
 
         if ai_mode:
-            try:
-                self.ai_model = TDGammonNetwork()
-                model_path = "models/ai_2000.pth"
-                self.ai_model.load_state_dict(torch.load(model_path, weights_only=True))
-                self.ai_model.eval()
-                print(f"AI Model '{model_path}' was successfully loaded!")
-            except Exception as e:
-                print(f"Error loading AI model: {e}")
-                print("Fallback! AI will move random.")
-                self.ai_model = None
-        else:
-            self.ai_model = None
+            if self.sio and getattr(self.sio, 'connected', False):
+                self.sio.emit('start_ai_match')
+            else:
+                messagebox.showerror("Error", "You have to be connected to the server to play with AI")
+                self.menu = True
+                self.draw_menu()
+                return
 
         self.draw_board()
 
@@ -802,27 +796,74 @@ class BackgammonUI:
             self.ai_perform_move()
 
     def ai_perform_move(self):
-            """Performs move chosen by get_ai_move() function from logic"""
-            move = self.game.get_ai_move(self.ai_model)
-            if move:
-                start, target, path = move
-                print(f"AI moves from {start} to {target}")
-                self.game.move_piece(start, target, path)
-                self.draw_board()
+            """Gets a move for AI from the server"""
+            if not self.sio or not getattr(self.sio, 'connected', False):
+                # Fallback if disconnected: random move
+                move = self.game.get_ai_move()
+                self._execute_ai_move_locally(move)
+                return
 
-                if self.game.game_over:
-                    if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
-                        self.draw_final_of_the_match(self.game.winner)
-                    else:
-                        self.draw_game_over(self.game.winner)
+                # Sends current state of the table to the server to check
+            state = self.game.get_state()
+            print("Sending move to the server to check the AI move...")
+            self.sio.emit('request_ai_move', state)
 
-                if self.game.dice and self.game.any_valid_moves():
-                    self.root.after(800, self.ai_perform_move)
+    def apply_ai_move_from_server(self, data):
+        """
+        Receives the move from the server and visually represents it. Continues AI turn if there are dice.
+        """
+        move = data.get('move')
+
+        if move:
+            start, target, path = move
+            print(f"Server moves: {start} -> {target}")
+
+            self.game.move_piece(start, target, path)
+            self.draw_board()
+
+            # Check if the move ends the game
+            if self.game.game_over:
+                if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                    self.draw_final_of_the_match(self.game.winner)
                 else:
-                    self.root.after(1000, self.ai_end_turn)
+                    self.draw_game_over(self.game.winner)
+                return
+
+            if self.game.dice and self.game.any_valid_moves():
+                self.root.after(800, self.ai_perform_move)
             else:
-                print(f"No valid moves for AI. Next turn")
                 self.root.after(1000, self.ai_end_turn)
+        else:
+            print("Server sais that there are no more moves. Ending turn")
+            self.root.after(1000, self.ai_end_turn)
+
+    def _execute_ai_move_locally(self, move):
+        """
+        Executes an AI move locally (used as a fallback when disconnected).
+        This mimics the logic that previously existed in ai_perform_move.
+        """
+        if move:
+            start, target, path = move
+            print(f"Fallback AI moves locally from {start} to {target}")
+            self.game.move_piece(start, target, path)
+            self.draw_board()
+
+            # Check win condition
+            if self.game.game_over:
+                if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
+                    self.draw_final_of_the_match(self.game.winner)
+                else:
+                    self.draw_game_over(self.game.winner)
+                return
+
+            # Continue turn if dice and moves remain
+            if self.game.dice and self.game.any_valid_moves():
+                self.root.after(800, self.ai_perform_move)
+            else:
+                self.root.after(1000, self.ai_end_turn)
+        else:
+            print("No valid moves for local AI fallback. Next turn.")
+            self.root.after(1000, self.ai_end_turn)
 
     def ai_end_turn(self):
         """Ends AI turn by automatically switching it and calls the draw_board() method"""

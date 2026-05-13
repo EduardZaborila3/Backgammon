@@ -1,0 +1,16 @@
+.idea/
+
+models/ai_*.pth
+!models/ai_100000.pth
+
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+
+venv/
+.env
+
+last_game.json
+*.log
