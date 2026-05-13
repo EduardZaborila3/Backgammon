@@ -2,6 +2,7 @@ import socketio
 from aiohttp import web
 from logic import BackgammonLogic
 import uuid
+from ai import TDGammonNetwork, calculate_best_move
 import torch
 
 sio = socketio.AsyncServer(cors_allowed_origins='*')
@@ -11,6 +12,15 @@ sio.attach(app)
 waiting_player = None
 games = {}
 players = {}
+
+ai_model = TDGammonNetwork()
+try:
+    ai_model.load_state_dict(torch.load("models/ai_100000.pth", weights_only=True))
+    ai_model.eval()
+    print("AI Model loaded successfully on the server!")
+except Exception as e:
+    print(f"Error loading AI model on server: {e}")
+    ai_model = None
 
 def get_game_state(game):
     return {
@@ -106,6 +116,22 @@ async def skip_turn(sid, data):
             print(f"Player {p_info.get('color')} cannot skip turn. Valid moves are available.")
     else:
         print(f"Player {p_info.get('color')} cannot skip turn. It's not their turn.")
+
+
+@sio.event
+async def request_ai_move(sid, state_data):
+    print(f"[{sid}] Server is calculating AI move...")
+
+    temp_game = BackgammonLogic()
+    temp_game.board = state_data['board']
+    temp_game.bar = state_data['bar']
+    temp_game.off = state_data['off']
+    temp_game.turn = state_data['turn']
+    temp_game.dice = state_data['dice']
+
+    best_move = calculate_best_move(temp_game, ai_model)
+
+    await sio.emit('ai_move_response', {'move': best_move}, to=sid)
 
 @sio.event
 async def make_move(sid, data):
