@@ -1,9 +1,37 @@
+import psycopg2
 import socketio
 from aiohttp import web
+from dotenv import load_dotenv
 from logic import BackgammonLogic
 import uuid
 from ai import TDGammonNetwork, calculate_best_move
 import torch
+
+load_dotenv()
+
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+        conn.autocommit = True
+        return conn
+    except Exception as e:
+        print(f"Critical error: Cant connect to the database. Details: {e}")
+        return None
+
+conn = get_db_connection()
+if conn:
+    print("Success: Connected to Supabase PostgreSQL!")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS test (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(50) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            games_played INT DEFAULT 0,
+            games_won INT DEFAULT 0
+        );
+    """)
+    cursor.close()
 
 sio = socketio.AsyncServer(cors_allowed_origins='*')
 app = web.Application()
