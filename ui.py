@@ -175,6 +175,8 @@ class BackgammonUI:
 
     def end_split_dice(self):
         """Ends dice splitting and brings the dice side by side in the starting player side of the table"""
+        if self.menu:
+            return
         self.show_split_dice = False
         self.draw_board()
         if self.ai_match and self.game.turn == 1:
@@ -504,6 +506,23 @@ class BackgammonUI:
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 55, text=f"Player {self.game.winner} reached 5 points! The match is over", fill="black", font=("Arial", 14, "bold"))
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 90, text="Go back to menu", fill="black", activefill="#ff1f1f", font=("Arial", 18, "bold"), tags="menu_btn")
 
+    def handle_double_offer(self, data):
+        """Outputs the doubling offer from the opponent cleanly"""
+
+        def display_popup():
+            new_value = data['new_value']
+
+            accepted = messagebox.askyesno(
+                "Double Offered",
+                f"Your opponent offered to double the stakes to {new_value}.\n\n"
+                f"YES = Continue game with stakes x{new_value}\n"
+                f"NO = Resign game and lose {self.game.cube_value} points",
+                parent=self.root
+            )
+            self.root.update()
+            self.sio.emit('respond_double', {'accept': accepted})
+        self.root.after(10, display_popup)
+
     def draw_game_over(self, winner):
         """Draws the pop-ups that announces the final of the game"""
         if self.is_multiplayer:
@@ -613,13 +632,13 @@ class BackgammonUI:
                     self.draw_difficulty_menu()
                     return
                 elif "btn_diff_easy" in tags:
-                    self.start_game(ai_mode=True, difficulty="easy")
+                    self.start_game(ai_mode=True, ai_difficulty="easy")
                     return
                 elif "btn_diff_medium" in tags:
-                    self.start_game(ai_mode=True, difficulty="medium")
+                    self.start_game(ai_mode=True, ai_difficulty="medium")
                     return
                 elif "btn_diff_hard" in tags:
-                    self.start_game(ai_mode=True, difficulty="hard")
+                    self.start_game(ai_mode=True, ai_difficulty="hard")
                     return
                 elif "btn_diff_back" in tags:
                     self.draw_menu()
@@ -652,15 +671,37 @@ class BackgammonUI:
                                             font=("Arial", 24))
                     return
             return
-        
+
+        clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
         #ignor click urile mele daca e tura ai ului
+        for item in clicked:
+            tags = self.canvas.gettags(item)
+            if "menu_btn" in tags:
+                if self.is_multiplayer:
+                    confirm = messagebox.askyesno("Leave Match",
+                                                  "Are you sure you want to leave? You will forfeit the current online match.")
+                    if confirm:
+                        self.sio.emit('leave_match')
+                        self.is_multiplayer = False
+                        self.menu = True
+                        self.draw_menu()
+                else:
+                    if not self.game.game_over:
+                        confirm = messagebox.askyesno("Navigate to menu",
+                                                      "Are you sure you want to go to the menu? If you want to continue the game later, you must save it first.")
+                        if confirm:
+                            self.menu = True
+                            self.draw_menu()
+                    else:
+                        self.menu = True
+                        self.draw_menu()
+                return
+
         if not self.game.game_over:
             if self.ai_match and self.game.turn == 1:
                 return
             if self.is_multiplayer and self.game.turn != self.my_player_id:
                 return
-
-        clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
         for item in clicked:
             tags = self.canvas.gettags(item)
             if "btn_roll" in tags:
@@ -745,7 +786,14 @@ class BackgammonUI:
                     return
             elif "btn_double" in tags:
                 if self.is_multiplayer:
+                    self.canvas.delete("btn_double")
+                    self.canvas.delete("btn_roll")
+                    self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 60, text="Waiting for opponent...", fill="yellow",
+                                            font=("Arial", 14, "bold"), tags="double_wait_text")
+                    self.root.update()
+
                     self.sio.emit('offer_double')
+                    return
                 else:
                     current_player = self.game.turn
                     opponent = 1 - current_player
@@ -896,6 +944,8 @@ class BackgammonUI:
         2. Choses and performs a random move
         4. Chains multiple moves if dice remain
         """
+        if self.menu:
+            return
         #verific daca e tura ai
         if self.game.turn != 1:
             return
@@ -910,6 +960,8 @@ class BackgammonUI:
 
     def ai_perform_move(self):
             """Gets a move for AI from the server"""
+            if self.menu:
+                return
             if not self.sio or not getattr(self.sio, 'connected', False):
                 # Fallback if disconnected: random move
                 move = self.game.get_ai_move()
@@ -926,11 +978,14 @@ class BackgammonUI:
         """
         Receives the move from the server and visually represents it. Continues AI turn if there are dice.
         """
+        if self.menu:
+            return
         move = data.get('move')
 
         if move:
             start, target, path = move
             print(f"Server moves: {start} -> {target}")
+            dice_before = len(self.game.dice)
 
             self.game.move_piece(start, target, path)
             self.draw_board()
@@ -941,6 +996,12 @@ class BackgammonUI:
                     self.draw_final_of_the_match(self.game.winner)
                 else:
                     self.draw_game_over(self.game.winner)
+                return
+
+            dice_after = len(self.game.dice)
+            if dice_before == dice_after:
+                print("Safety Trigger: Move did not consume any dice. Ending turn to prevent infinite loop!")
+                self.root.after(1000, self.ai_end_turn)
                 return
 
             if self.game.dice and self.game.any_valid_moves():
@@ -981,5 +1042,7 @@ class BackgammonUI:
 
     def ai_end_turn(self):
         """Ends AI turn by automatically switching it and calls the draw_board() method"""
+        if self.menu:
+            return
         self.game.switch_turn()
         self.draw_board()

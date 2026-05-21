@@ -42,6 +42,10 @@ def on_state_update(data):
 def on_opponent_disconnect(data):
     message_queue.put(("disconnect", None))
 
+@sio.on('receive_double_offer')
+def on_receive_double_offer(data):
+    message_queue.put(("receive_double_offer", data))
+
 def network_thread(server_address):
     try:
         if not server_address.startswith("http"):
@@ -84,6 +88,8 @@ def process_messages(root, app):
             elif msg_type == "ai_move":
                 app.apply_ai_move_from_server(data)
 
+            elif msg_type == "receive_double_offer":
+                app.handle_double_offer(data)
 
     except queue.Empty:
         pass
