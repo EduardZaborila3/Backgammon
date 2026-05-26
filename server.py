@@ -205,14 +205,14 @@ async def undo_move(sid):
         await sio.emit('game_state_update', get_game_state(game), room=p_info['room'])
 
 @sio.event
-async def play_again(sid):
+async def request_play_again(sid):
     if sid not in players:
         return
 
     p_info = players[sid]
     room_id = p_info['room']
 
-    await sio.emit('receive_play_again_request', room=room_id, skip_sid=sid)
+    await sio.emit('receive_play_again_request', {}, room=room_id, skip_sid=sid)
 
 @sio.event
 async def respond_play_again(sid, data):
@@ -227,7 +227,7 @@ async def respond_play_again(sid, data):
         print(f"Play again accepted in room {room_id}. Starting new game...")
         await sio.emit('game_state_update', get_game_state(game), room=room_id)
     else:
-        await sio.emit('play_again_declined', room=room_id, skip_sid=sid)
+        await sio.emit('play_again_declined', {}, room=room_id, skip_sid=sid)
         print(f"Play again declined. Destroying room {room_id}...")
         if room_id in games:
             del games[room_id]
