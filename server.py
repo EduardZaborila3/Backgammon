@@ -22,17 +22,6 @@ def get_db_connection():
 conn = get_db_connection()
 if conn:
     print("Success: Connected to Supabase PostgreSQL!")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS test (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(50) UNIQUE NOT NULL,
-            password_hash VARCHAR(255) NOT NULL,
-            games_played INT DEFAULT 0,
-            games_won INT DEFAULT 0
-        );
-    """)
-    cursor.close()
 
 sio = socketio.AsyncServer(cors_allowed_origins='*')
 app = web.Application()
@@ -222,12 +211,31 @@ async def play_again(sid):
 
     p_info = players[sid]
     room_id = p_info['room']
-    game = games[room_id]
 
-    game.reset_game()
-    print(f"Game has been reset by player {p_info['color']} in room {room_id}. Starting a new match...")
-    await sio.emit('game_state_update', get_game_state(game), room=room_id)
+    await sio.emit('receive_play_again_request', room=room_id, skip_sid=sid)
 
+@sio.event
+async def respond_play_again(sid, data):
+    if sid not in players: return
+    p_info = players[sid]
+    room_id = p_info['room']
+
+    accepted = data.get('accept')
+    if accepted:
+        game = games[room_id]
+        game.reset_game()
+        print(f"Play again accepted in room {room_id}. Starting new game...")
+        await sio.emit('game_state_update', get_game_state(game), room=room_id)
+    else:
+        await sio.emit('play_again_declined', room=room_id, skip_sid=sid)
+        print(f"Play again declined. Destroying room {room_id}...")
+        if room_id in games:
+            del games[room_id]
+
+        sids_to_remove = [k for k, v in players.items() if v['room'] == room_id]
+        for s in sids_to_remove:
+            del players[s]
+            await sio.leave_room(s, room_id)
 
 @sio.event
 async def offer_double(sid):
