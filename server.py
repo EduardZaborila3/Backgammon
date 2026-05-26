@@ -9,6 +9,7 @@ from ai import TDGammonNetwork, calculate_best_move
 import torch
 
 load_dotenv()
+connected_users = {}
 
 def get_db_connection():
     try:
@@ -66,8 +67,14 @@ def get_game_state(game):
     }
 
 @sio.event
-async def connect(sid, environ):
-    print(f"[{sid}] connected to the server.")
+async def connect(sid, environ, auth):
+    if not auth or 'device_token' not in auth:
+        print(f"[{sid}] Connection rejected: No device token provided")
+        raise socketio.exceptions.ConnectionRefusedError('Missing token')
+    token = auth['device_token']
+    print(f"[{sid}] connected to the server with token: {token}")
+    connected_users[sid] = {'token': token, 'username': f"Guest_{sid[:4]}"}
+    print(f"[{sid}] Authenticated successfully!")
 
 @sio.event
 async def disconnect(sid):
