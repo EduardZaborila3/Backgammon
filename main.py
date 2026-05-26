@@ -4,11 +4,13 @@ from tkinter import simpledialog
 import threading
 import queue
 import socketio
+
+from auth import get_or_create_device_token
 from ui import BackgammonUI
 from constants import *
+# import auth
 
-# SERVER_URL = "https://electrodialitic-peyton-calorifacient.ngrok-free.dev"
-SERVER_URL = "https://server-table-ro.onrender.com"
+SERVER_URL = "http://64.225.109.232:5555"
 
 message_queue = queue.Queue()
 
@@ -39,18 +41,29 @@ def on_state_update(data):
 
 
 @sio.on('opponent_disconnected')
-def on_opponent_disconnect(data):
+def on_opponent_disconnect():
     message_queue.put(("disconnect", None))
 
 @sio.on('receive_double_offer')
 def on_receive_double_offer(data):
     message_queue.put(("receive_double_offer", data))
 
+@sio.on('receive_play_again_request')
+def on_receive_play_again_request():
+    message_queue.put(("receive_play_again_request", None))
+
+@sio.on('play_again_declined')
+def on_play_again_declined():
+    message_queue.put(("play_again_declined", None))
+
 def network_thread(server_address):
     try:
         if not server_address.startswith("http"):
-            server_address = "https://" + server_address
-        print(f"Trying to connect to the server at {server_address}...")
+            server_address = "http://" + server_address
+
+        # device_token = get_or_create_device_token()
+        # print(f"Trying to connect to the server at {server_address}...")
+        # sio.connect(server_address, auth={"device_token": device_token})
         sio.connect(server_address)
         sio.wait()
     except Exception as e:
@@ -71,10 +84,9 @@ def process_messages(root, app):
                 app.sync_state_from_server(data)
 
             elif msg_type == "disconnect":
-                messagebox.showwarning("Opponent Disconnected", "Your opponent left the game! You won!")
-                app.is_multiplayer = False
-                app.menu = True
-                app.draw_menu()
+                app.game.game_over = True
+                app.game.winner = app.my_player_id
+                app.draw_game_over(winner=app.my_player_id, win_conditions="leave")
 
             elif msg_type == "connection error":
                 messagebox.showerror("Connection Error", f"Failed to connect to the server. \n Reason: {data}")
@@ -90,6 +102,12 @@ def process_messages(root, app):
 
             elif msg_type == "receive_double_offer":
                 app.handle_double_offer(data)
+
+            elif msg_type == "receive_play_again_request":
+                app.handle_play_again_request()
+
+            elif msg_type == "play_again_declined":
+                app.handle_play_again_declined()
 
     except queue.Empty:
         pass

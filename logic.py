@@ -42,7 +42,7 @@ class BackgammonLogic:
             self.determine_starting_player()
 
     def determine_starting_player(self):
-        """Roll a dice for every player. The one that gets the bigger dice starts"""
+        """Roll a die for every player. The one that gets the bigger dice starts"""
         while True:
             d0 = random.randint(1, 6)
             d1 = random.randint(1, 6)
