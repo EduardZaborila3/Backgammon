@@ -87,8 +87,9 @@ def db_authenticate_user(token):
             else:
                 cursor.execute("INSERT INTO users (device_token) VALUES (%s) RETURNING id", (token,))
                 new_id = cursor.fetchone()[0]
+                new_username = cursor.fetchone()[1]
                 print(f"Created new user in the database: ID {new_id}")
-                return {'id': new_id, 'username': row[1]}
+                return {'id': new_id, 'username': new_username}
     except Exception as err:
         print(f"Database authentication error: {err}")
         return None
