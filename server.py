@@ -105,7 +105,7 @@ async def connect(sid, environ, auth):
     user_data = await asyncio.to_thread(db_authenticate_user, token)
 
     if not user_data:
-        raise socketio.exception.ConnectionRefusedError('Database error')
+        raise socketio.exceptions.ConnectionRefusedError('Database error')
 
     connected_users[sid] = {'token': token, 'username': f"Guest_{sid[:4]}"}
     print(f"[{sid}] Authenticated successfully!")
