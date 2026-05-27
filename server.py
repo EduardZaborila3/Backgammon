@@ -99,14 +99,21 @@ def db_authenticate_user(token):
 
 @sio.event
 async def connect(sid, environ, auth):
-    if sid in connected_users:
-        print(f"[{sid}] already connected to the server.")
-        return socketio.exceptions.ConnectionRefusedError('Already connected to the server')
     if not auth or 'device_token' not in auth:
         print(f"[{sid}] Connection rejected: No device token provided")
         raise socketio.exceptions.ConnectionRefusedError('Missing token')
     token = auth['device_token']
     print(f"[{sid}] connected to the server with token: {token}")
+
+    user_already_online = False
+    for active_sid, data in connected_users.items():
+        if data.get('token') == token:
+            user_already_online = True
+            break
+
+    if user_already_online:
+        print(f"[{sid}] Connection rejected: Account is already active in another session.")
+        raise socketio.exceptions.ConnectionRefusedError('Account already active')
 
     user_data = await asyncio.to_thread(db_authenticate_user, token)
 
@@ -123,6 +130,9 @@ async def disconnect(sid):
 
     if waiting_player == sid:
         waiting_player = None
+
+    if sid in connected_users:
+        del connected_users[sid]
 
     if sid in players:
         room_id = players[sid]['room']
