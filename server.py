@@ -3,10 +3,13 @@ import psycopg2
 import socketio
 from aiohttp import web
 from dotenv import load_dotenv
+from sympy.codegen.fnodes import use_rename
+
 from logic import BackgammonLogic
 import uuid
 from ai import TDGammonNetwork, calculate_best_move
 import torch
+import asyncio
 
 load_dotenv()
 connected_users = {}
@@ -66,6 +69,31 @@ def get_game_state(game):
         'has_rolled': game.has_rolled
     }
 
+def db_authenticate_user(token):
+    """Searches the token in the database. If the token exists, then the user is free to play the game.
+     If the token can't be found in the database, this means a new user has to be created."""
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, username FROM users WHERE token = %s", (token,))
+            row = cursor.fetchone()
+
+            if row:
+                if row[1]:
+                    username = row[1]
+                else:
+                    username = f"Guest_{row[0]}"
+                    return {'id': row[0], 'username': username}
+                print(f"User {username} is online!")
+            else:
+                cursor.execute("INSERT INTO users (device_token) VALUES (%s) RETURNING id", (token,))
+                new_id = cursor.fetchone()[0]
+                print(f"Created new user in the database: ID {new_id}")
+                return {'id': new_id, 'username': row[1]}
+    except Exception as err:
+        print(f"Database authentication error: {err}")
+        return None
+
+
 @sio.event
 async def connect(sid, environ, auth):
     if not auth or 'device_token' not in auth:
@@ -73,6 +101,12 @@ async def connect(sid, environ, auth):
         raise socketio.exceptions.ConnectionRefusedError('Missing token')
     token = auth['device_token']
     print(f"[{sid}] connected to the server with token: {token}")
+
+    user_data = await asyncio.to_thread(db_authenticate_user, token)
+
+    if not user_data:
+        raise socketio.exception.ConnectionRefusedError('Database error')
+
     connected_users[sid] = {'token': token, 'username': f"Guest_{sid[:4]}"}
     print(f"[{sid}] Authenticated successfully!")
 
