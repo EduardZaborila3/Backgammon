@@ -89,7 +89,7 @@ def db_authenticate_user(token):
                 new_user = cursor.fetchone()
                 new_id = new_user[0]
                 new_username = f"Guest_{new_id}"
-                cursor.execute("INSERT INTO users (username) VALUES (%s)", (new_username,))
+                cursor.execute("UPDATE users SET username = %s where id = %s", (new_username, new_id))
                 print(f"Created new user in the database: ID {new_id}")
                 return {'id': new_id, 'username': new_username}
     except Exception as err:
