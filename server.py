@@ -74,7 +74,7 @@ def db_authenticate_user(token):
      If the token can't be found in the database, this means a new user has to be created."""
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT id, username FROM users WHERE token = %s", (token,))
+            cursor.execute("SELECT id, username FROM users WHERE device_token = %s", (token,))
             row = cursor.fetchone()
 
             if row:
