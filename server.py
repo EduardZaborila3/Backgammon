@@ -85,7 +85,7 @@ def db_authenticate_user(token):
                     return {'id': row[0], 'username': username}
                 print(f"User {username} is online!")
             else:
-                cursor.execute("INSERT INTO users (device_token) VALUES (CAST %s AS uuid) RETURNING id", (token,))
+                cursor.execute("INSERT INTO users (device_token) VALUES (CAST(%s AS uuid)) RETURNING id", (token,))
                 new_id = cursor.fetchone()[0]
                 new_username = cursor.fetchone()[1]
                 print(f"Created new user in the database: ID {new_id}")
