@@ -99,6 +99,9 @@ def db_authenticate_user(token):
 
 @sio.event
 async def connect(sid, environ, auth):
+    if sid in connected_users:
+        print(f"[{sid}] already connected to the server.")
+        return socketio.exceptions.ConnectionRefusedError('Already connected to the server')
     if not auth or 'device_token' not in auth:
         print(f"[{sid}] Connection rejected: No device token provided")
         raise socketio.exceptions.ConnectionRefusedError('Missing token')
