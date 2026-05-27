@@ -82,12 +82,13 @@ def db_authenticate_user(token):
                     username = row[1]
                 else:
                     username = f"Guest_{row[0]}"
-                    return {'id': row[0], 'username': username}
                 print(f"User {username} is online!")
+                return {'id': row[0], 'username': username}
             else:
                 cursor.execute("INSERT INTO users (device_token) VALUES (CAST(%s AS uuid)) RETURNING id", (token,))
-                new_id = cursor.fetchone()[0]
-                new_username = cursor.fetchone()[1]
+                new_user = cursor.fetchone()
+                new_id = new_user[0]
+                new_username = f"Guest_{new_id}"
                 print(f"Created new user in the database: ID {new_id}")
                 return {'id': new_id, 'username': new_username}
     except Exception as err:
