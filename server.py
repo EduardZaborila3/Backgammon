@@ -74,16 +74,16 @@ def db_authenticate_user(token):
      If the token can't be found in the database, this means a new user has to be created."""
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT id, username FROM users WHERE device_token = CAST(%s AS uuid)", (token,))
+            cursor.execute("SELECT id, username, games_played, games_won FROM users WHERE device_token = CAST(%s AS uuid)", (token,))
             row = cursor.fetchone()
 
             if row:
-                if row[1]:
-                    username = row[1]
-                else:
-                    username = f"Guest_{row[0]}"
+                username = row[1] if row[1] else username = f"Guest_{row[0]}"
+                games_played = row[2] if row[2] is not None else 0
+                games_won = row[3] if row[3] is not None else 0
+
                 print(f"User {username} is online!")
-                return {'id': row[0], 'username': username}
+                return {'id': row[0], 'username': username, 'games_played': games_played, 'games_won': games_won}
             else:
                 cursor.execute("INSERT INTO users (device_token) VALUES (CAST(%s AS uuid)) RETURNING id", (token,))
                 new_user = cursor.fetchone()
@@ -91,7 +91,7 @@ def db_authenticate_user(token):
                 new_username = f"Guest_{new_id}"
                 cursor.execute("UPDATE users SET username = %s where id = %s", (new_username, new_id))
                 print(f"Created new user in the database: ID {new_id}")
-                return {'id': new_id, 'username': new_username}
+                return {'id': new_id, 'username': new_username, 'games_played': 0, 'games_won': 0}
     except Exception as err:
         print(f"Database authentication error: {err}")
         return None
@@ -121,6 +121,13 @@ async def connect(sid, environ, auth):
         raise socketio.exceptions.ConnectionRefusedError('Database error')
 
     connected_users[sid] = {'token': token, 'username': f"Guest_{sid[:4]}"}
+
+    await sio.emit('profile_data_update', {
+        'username': user_data['username'],
+        'games_played': user_data['games_played'],
+        'games_won': user_data['games_won']
+    }, to=sid)
+
     print(f"[{sid}] Authenticated successfully!")
 
 @sio.event

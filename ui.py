@@ -47,6 +47,15 @@ class BackgammonUI:
         self.show_split_dice = False
         self._multiplayer_split_done = False
 
+        self.profile_screen = False
+        self.credentials_popup_active = False
+        self.email_entry = None
+        self.password_entry = None
+
+        self.username = "Loading..."
+        self.games_played = 0
+        self.games_won = 0
+
         if is_new_player():
             self.auth_screen = True
             self.menu = False
@@ -102,6 +111,103 @@ class BackgammonUI:
                                      fill="#1c5c16", outline="white", width=2, tags="menu_online")
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 175, text="Play Online", fill="#aaaaaa", activefill="#f9fc4f",
                                 font=("Arial", 16, "bold"), tags="menu_online")
+
+        # menu button
+        self.canvas.create_oval(WIDTH - 80, 20, WIDTH - 20, 80, fill="#ffdb58", outline="black", width=2, tags="menu_profile")
+        self.canvas.create_text(WIDTH - 50, 50, text="Profile", fill="black", font=("Arial", 12, "bold"), tags="menu_profile")
+
+    def draw_profile_menu(self):
+        """Draws the profile screen with statistics"""
+        self.canvas.delete("all")
+        self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT, fill="#994f0a")
+
+        center_x = WIDTH / 2
+
+        # Title
+        self.canvas.create_text(center_x, 60, text="Player Profile", fill="#CDCDCD", font=("Arial", 36, "bold"))
+
+        # Avatar
+        initial = self.username[0].upper() if self.username and self.username != "Loading..." else "?"
+
+        self.canvas.create_oval(center_x - 50, 110, center_x + 50, 210, fill="#3f1405", outline="gold", width=3)
+        self.canvas.create_text(center_x, 160, text=initial, fill="gold", font=("Arial", 48, "bold"))
+        self.canvas.create_text(center_x, 250, text=self.username, fill="white", font=("Arial", 24, "bold"))
+
+        # Statistics
+        win_rate = int((self.games_won / self.games_played * 100)) if self.games_played > 0 else 0
+
+        self.canvas.create_text(center_x - 180, 320, text=f"Games Played:\n{self.games_played}", fill="#aaaaaa",
+                                font=("Arial", 16, "bold"), justify="center")
+        self.canvas.create_text(center_x, 320, text=f"Wins:\n{self.games_won}", fill="#6aff8a",
+                                font=("Arial", 16, "bold"), justify="center")
+        self.canvas.create_text(center_x + 180, 320, text=f"Win Rate:\n{win_rate}%", fill="#ffdb58",
+                                font=("Arial", 16, "bold"), justify="center")
+
+        # Credentials section
+        self.canvas.create_rectangle(center_x - 220, 380, center_x + 220, 480, fill="#7A711C", outline="black", width=2)
+        self.canvas.create_text(center_x, 405, text="Account Security", fill="white", font=("Arial", 16, "bold"))
+        self.canvas.create_text(center_x, 430, text="Add an email and password to secure your account.",
+                                fill="#dddddd", font=("Arial", 12))
+
+        # Credentials btn
+        self.canvas.create_rectangle(center_x - 110, 445, center_x + 110, 470, fill="#1c5c16", outline="white",
+                                     tags="btn_set_credentials")
+        self.canvas.create_text(center_x, 457, text="Set Email & Password", fill="white", font=("Arial", 10, "bold"),
+                                tags="btn_set_credentials")
+
+        # back btn
+        self.canvas.create_rectangle(center_x - 100, 520, center_x + 100, 570, fill="#3f1405", outline="white", width=2,
+                                     tags="btn_profile_back")
+        self.canvas.create_text(center_x, 545, text="Back to Menu", fill="#aaaaaa", activefill="#f9fc4f",
+                                font=("Arial", 16, "bold"), tags="btn_profile_back")
+
+    def draw_credentials_popup(self):
+        """Draws a pop up for credentials"""
+        self.credentials_popup_active = True
+        center_x = WIDTH / 2
+        center_y = HEIGHT / 2
+
+        # Background
+        self.canvas.create_rectangle(center_x - 200, center_y - 130, center_x + 200, center_y + 130,
+                                     fill="#f0e68c", outline="black", width=3, tags="cred_popup")
+        self.canvas.create_text(center_x, center_y - 90, text="Secure Your Account",
+                                fill="black", font=("Arial", 18, "bold"), tags="cred_popup")
+
+        # Email field
+        self.canvas.create_text(center_x - 140, center_y - 30, text="Email:", fill="black", font=("Arial", 14, "bold"),
+                                anchor="w", tags="cred_popup")
+        self.email_entry = tk.Entry(self.root, font=("Arial", 14), width=20)
+        self.canvas.create_window(center_x + 40, center_y - 30, window=self.email_entry, tags="cred_popup")
+
+        # Password field
+        self.canvas.create_text(center_x - 140, center_y + 20, text="Password:", fill="black",
+                                font=("Arial", 14, "bold"), anchor="w", tags="cred_popup")
+        self.password_entry = tk.Entry(self.root, font=("Arial", 14), width=20, show="*")
+        self.canvas.create_window(center_x + 40, center_y + 20, window=self.password_entry, tags="cred_popup")
+
+        # Save btn
+        self.canvas.create_rectangle(center_x - 120, center_y + 70, center_x - 20, center_y + 110,
+                                     fill="#24A524", outline="black", width=2, tags=("cred_popup", "btn_save_cred"))
+        self.canvas.create_text(center_x - 70, center_y + 90, text="SAVE", fill="white", font=("Arial", 14, "bold"),
+                                tags=("cred_popup", "btn_save_cred"))
+
+        # Cancel btn
+        self.canvas.create_rectangle(center_x + 20, center_y + 70, center_x + 120, center_y + 110,
+                                     fill="#ff5656", outline="black", width=2, tags=("cred_popup", "btn_cancel_cred"))
+        self.canvas.create_text(center_x + 70, center_y + 90, text="CANCEL", fill="white", font=("Arial", 14, "bold"),
+                                tags=("cred_popup", "btn_cancel_cred"))
+
+    def close_credentials_popup(self):
+        """Destroys pop up"""
+        self.credentials_popup_active = False
+        self.canvas.delete("cred_popup")
+
+        if self.email_entry:
+            self.email_entry.destroy()
+            self.email_entry = None
+        if self.password_entry:
+            self.password_entry.destroy()
+            self.password_entry = None
 
     def draw_difficulty_menu(self):
         """Draws the sub-menu for AI difficulty selection"""
@@ -746,6 +852,45 @@ class BackgammonUI:
                     messagebox.showinfo("Info", "Auth logic is going to be implemented!")
             return
 
+        if self.profile_screen:
+            clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+
+            if self.credentials_popup_active:
+                for item in clicked:
+                    tags = self.canvas.gettags(item)
+                    if "btn_save_cred" in tags:
+                        email = self.email_entry.get().strip()
+                        password = self.password_entry.get().strip()
+
+                        if email and password:
+                            if self.sio and getattr(self.sio, 'connected', False):
+                                self.sio.emit('register_credentials', {'email': email, 'password': password})
+                                messagebox.showinfo("Success", "Credentials sent to server!")
+                            else:
+                                messagebox.showerror("Error",
+                                                     "You must be connected to the server to update your account.")
+                            self.close_credentials_popup()
+                        else:
+                            messagebox.showwarning("Warning", "Please fill in both fields.")
+                        return
+
+                    elif "btn_cancel_cred" in tags:
+                        self.close_credentials_popup()
+                        return
+                return
+
+            for item in clicked:
+                tags = self.canvas.gettags(item)
+                if "btn_profile_back" in tags:
+                    self.profile_screen = False
+                    self.menu = True
+                    self.draw_menu()
+                    return
+                elif "btn_set_credentials" in tags:
+                    self.draw_credentials_popup()
+                    return
+            return
+
         if self.menu:
             clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
             for item in clicked:
@@ -794,6 +939,11 @@ class BackgammonUI:
                     self.canvas.delete("all")
                     self.canvas.create_text(WIDTH / 2, HEIGHT / 2, text="Waiting for opponent...", fill="white",
                                             font=("Arial", 24))
+                    return
+                elif "menu_profile" in tags:
+                    self.menu = False
+                    self.profile_screen = True
+                    self.draw_profile_menu()
                     return
             return
 

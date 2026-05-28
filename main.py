@@ -61,6 +61,10 @@ def on_receive_play_again_request(data):
 def on_play_again_declined(data):
     message_queue.put(("play_again_declined", None))
 
+@sio.on('profile_data_update')
+def on_profile_data_update(data):
+    message_queue.put(("profile_update", data))
+
 
 def start_server_connection(auth_type):
     """Function called by the UI after the user chooses how to connect"""
@@ -134,6 +138,14 @@ def process_messages(root, app):
 
             elif msg_type == "play_again_declined":
                 app.handle_play_again_declined()
+
+            elif msg_type == "profile_update":
+                app.username = data['username']
+                app.games_played = data['games_played']
+                app.games_won = data['games_won']
+
+                if app.profile_screen:
+                    app.draw_profile_menu()
 
     except queue.Empty:
         pass
