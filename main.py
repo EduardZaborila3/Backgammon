@@ -8,7 +8,9 @@ import socketio
 from auth import get_or_create_device_token
 from ui import BackgammonUI
 from constants import *
-# import auth
+import auth
+import sys
+import uuid
 
 SERVER_URL = "http://64.225.109.232:5555"
 
@@ -20,6 +22,9 @@ sio = socketio.Client()
 def connect():
     print("Connected to the server!")
 
+@sio.event
+def connect_error(data):
+    message_queue.put(("connection error", data))
 
 @sio.event
 def disconnect():
@@ -49,23 +54,37 @@ def on_receive_double_offer(data):
     message_queue.put(("receive_double_offer", data))
 
 @sio.on('receive_play_again_request')
-def on_receive_play_again_request():
+def on_receive_play_again_request(data):
     message_queue.put(("receive_play_again_request", None))
 
 @sio.on('play_again_declined')
-def on_play_again_declined():
+def on_play_again_declined(data):
     message_queue.put(("play_again_declined", None))
 
-def network_thread(server_address):
+
+def start_server_connection(auth_type):
+    """Function called by the UI after the user chooses how to connect"""
+    if auth_type == "guest":
+        token = get_or_create_device_token()
+        t = threading.Thread(target=network_thread, args=(SERVER_URL, token), daemon=True)
+        t.start()
+
+    elif auth_type == "account":
+        # email / passsword logic
+        pass
+
+
+def network_thread(server_address, token):
+    """Connects to server with token"""
     try:
         if not server_address.startswith("http"):
             server_address = "http://" + server_address
 
-        # device_token = get_or_create_device_token()
-        # print(f"Trying to connect to the server at {server_address}...")
-        # sio.connect(server_address, auth={"device_token": device_token})
-        sio.connect(server_address)
+        print(f"Trying to connect to the server with token: {token}")
+        sio.connect(server_address, auth={"device_token": token})
         sio.wait()
+    except socketio.exceptions.ConnectionError:
+        pass
     except Exception as e:
         message_queue.put(("connection error", e))
 
@@ -89,10 +108,17 @@ def process_messages(root, app):
                 app.draw_game_over(winner=app.my_player_id, win_conditions="leave")
 
             elif msg_type == "connection error":
-                messagebox.showerror("Connection Error", f"Failed to connect to the server. \n Reason: {data}")
-                app.is_multiplayer = False
-                app.menu = True
-                app.draw_menu()
+                error_msg = str(data)
+
+                if "Account already active" in error_msg:
+                    messagebox.showerror("Acces Denied", "This account is already active in another window or device. \nThe game will close.")
+                    root.destroy()
+                    exit()
+                else:
+                    messagebox.showerror("Connection Error", f"Failed to connect to the server. \nReason: {error_msg}")
+                    app.is_multiplayer = False
+                    app.menu = True
+                    app.draw_menu()
 
             elif msg_type == "game_state_update":
                 app.sync_state_from_server(data)
@@ -124,16 +150,12 @@ if __name__ == "__main__":
         exit()
 
     root.deiconify()
-    root.title("Backgammon - Menu")
+    root.title("Backgammon")
     root.geometry(f"{WIDTH}x{HEIGHT}")
     root.resizable(False, False)
 
-    app = BackgammonUI(root)
-
+    app = BackgammonUI(root, auth_callback=start_server_connection)
     app.sio = sio
-
-    t = threading.Thread(target=network_thread, args=(address,), daemon=True)
-    t.start()
 
     process_messages(root, app)
 

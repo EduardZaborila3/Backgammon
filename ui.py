@@ -1,10 +1,13 @@
 import tkinter as tk
+
+from auth import is_new_player
 from logic import BackgammonLogic
 import random
 from constants import *
 import json
 from tkinter import messagebox
 import os
+import auth
 
 class BackgammonUI:
     """
@@ -17,10 +20,12 @@ class BackgammonUI:
         valid_moves (list): Cache of valid moves for the currently selected piece
         ai_match (bool): True if playing against the CPU, False for PvP
     """
-    def __init__(self, root):
+    def __init__(self, root, auth_callback=None):
         """Initializes the UI components and binds event listeners."""
         self.game = BackgammonLogic()
         self.root = root
+
+        self.auth_callback = auth_callback
 
         self.sio = None
         self.my_player_id = None
@@ -42,14 +47,41 @@ class BackgammonUI:
         self.show_split_dice = False
         self._multiplayer_split_done = False
 
-        self.draw_menu()
-        # self.draw_board()
+        if is_new_player():
+            self.auth_screen = True
+            self.menu = False
+            self.draw_auth_menu()
+        else:
+            self.auth_screen = False
+            self.menu = True
+            self.draw_menu()
+            if self.auth_callback:
+                self.auth_callback("guest")
 
         self.waiting_for_skip = False
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
+
+    def draw_auth_menu(self):
+        """Draws the initial authentication screen"""
+        self.canvas.delete("all")
+        self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT, fill="#994f0a")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 150, text="Welcome to Backgammon", fill="#CDCDCD",
+                                font=("Arial", 36, "bold"))
+
+        # Guest btn
+        self.canvas.create_rectangle(WIDTH / 2 - 150, HEIGHT / 2 - 50, WIDTH / 2 + 150, HEIGHT / 2 + 10, fill="#3f1405",
+                                     outline="white", width=2, tags="auth_guest")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 20, text="Play as Guest", fill="white", activefill="#f9fc4f",
+                                font=("Arial", 16, "bold"), tags="auth_guest")
+
+        # Account btn
+        self.canvas.create_rectangle(WIDTH / 2 - 150, HEIGHT / 2 + 40, WIDTH / 2 + 150, HEIGHT / 2 + 100,
+                                     fill="#1c5c16", outline="white", width=2, tags="auth_account")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 70, text="Login / Register", fill="white", activefill="#f9fc4f",
+                                font=("Arial", 16, "bold"), tags="auth_account")
 
     def draw_menu(self):
         """Draws the menu with game options"""
@@ -170,7 +202,7 @@ class BackgammonUI:
             if self.game.match_score[0] >= 5 or self.game.match_score[1] >= 5:
                 self.draw_final_of_the_match(self.game.winner)
             else:
-                self.draw_game_over(self.game.winner)
+                self.draw_game_over(self.game.winner, win_conditions="normal")
                 self.sio.emit('game_over', {'winner': self.game.winner})
 
     def end_split_dice(self):
@@ -210,47 +242,47 @@ class BackgammonUI:
 
         available_width = (PLAY_AREA_END_X - PLAY_AREA_START_X) - CENTER_BAR_WIDTH
         point_width = available_width / 12
-        
-        for i in range(24):
-            #jos 0-11
-            if i < 12:
-                visual_col = i
+
+        for visual_index in range(24):
+            server_index = self.get_server_index(visual_index)
+
+            if visual_index < 12:
+                visual_col = visual_index
                 y_base = PLAY_AREA_END_Y
                 y_tip = PLAY_AREA_END_Y - TRIANGLE_HEIGHT
-                # albu descreste
                 direction = -1
-            #sus 12-23
-            else: 
-                visual_col = 23 - i
+            else:
+                visual_col = 23 - visual_index
                 y_base = PLAY_AREA_START_Y
                 y_tip = PLAY_AREA_START_Y + TRIANGLE_HEIGHT
-                #negru creste
                 direction = 1
-            
+
             x_base = PLAY_AREA_END_X - (visual_col * point_width) - (point_width / 2)
-            if visual_col >= 6: 
+            if visual_col >= 6:
                 x_base -= CENTER_BAR_WIDTH
-            
-            if i in valid_destinations:
-                if len(self.game.board[i]) == 1:
+
+            if server_index in valid_destinations:
+                if len(self.game.board[server_index]) == 1:
                     color = HINT_HIGHLIGHT_COLOR
                 else:
                     color = HIGHLIGHT_COLOR
-            elif i % 2 == 0:
+            elif visual_index % 2 == 0:
                 color = POINT_COLOR_BLACK
             else:
                 color = POINT_COLOR_RED
-            
+
             coords = [x_base - point_width / 2, y_base, x_base + point_width / 2, y_base, x_base, y_tip]
             self.canvas.create_polygon(coords, fill=color)
-            self.draw_checkers(i, x_base, y_base, direction)
-            self.draw_info_and_bars()
 
-            if not self.game.has_rolled:
-                if not (self.ai_match and self.game.turn == 1):
-                    self.draw_roll_dice_button()
-                    if self.game.cube_value < 64:
-                        self.draw_double_button()
+            self.draw_checkers(server_index, x_base, y_base, direction)
+
+        self.draw_info_and_bars()
+
+        if not self.game.has_rolled:
+            if not (self.ai_match and self.game.turn == 1):
+                self.draw_roll_dice_button()
+                if self.game.cube_value < 64:
+                    self.draw_double_button()
 
     def draw_checkers(self, index, x, y_base, direction):
         """Draws checkers on the board in the initial state"""
@@ -346,56 +378,78 @@ class BackgammonUI:
 
     def draw_roll_dice_button(self):
         """Draws the button that triggers the dice roll"""
+        if self.game.game_over:
+            return
         if self.is_multiplayer and self.game.turn != self.my_player_id:
             return
+        if not self.is_multiplayer and self.ai_match and self.game.turn == 1:
+            return
+
         ROLL_DICE_BTN_RADIUS = 50
-        y0 = HEIGHT / 2 + (ROLL_DICE_BTN_RADIUS / 2)
-        y1 = HEIGHT / 2 - (ROLL_DICE_BTN_RADIUS / 2)
+        y0 = HEIGHT / 2 - (ROLL_DICE_BTN_RADIUS / 2)
+        y1 = HEIGHT / 2 + (ROLL_DICE_BTN_RADIUS / 2)
+
         self.canvas.create_oval(680, y0, 730, y1, fill="blue", outline="black", tags="btn_roll")
-        self.canvas.create_text(705, y0 - 25, fill="white", text="ROLL", font=("Arial", 10, "bold"), tags="btn_roll", activefill="#f08888")
+        self.canvas.create_text(705, HEIGHT / 2, fill="white", text="ROLL", font=("Arial", 10, "bold"), tags="btn_roll",
+                                activefill="#f08888")
 
     def draw_double_button(self):
         """Draws the button that triggers doubling the prize"""
-        if self.game.turn == self.my_player_id:
-            if self.game.has_rolled:
-                return
+        if self.game.game_over:
+            return
+        if self.is_multiplayer and self.game.turn != self.my_player_id:
+            return
+        if not self.is_multiplayer and self.ai_match and self.game.turn == 1:
+            return
+        if self.game.has_rolled:
+            return
+        if self.game.cube_owner != -1 and self.game.cube_owner != self.game.turn:
+            return
 
-            if self.game.cube_owner != -1 and self.game.cube_owner != self.game.turn:
-                return
-            if self.ai_match and self.game.turn == 1:
-                return
+        x0 = WIDTH - 70
+        x1 = WIDTH - 20
+        y0 = HEIGHT / 2 - 25
+        y1 = HEIGHT / 2 + 25
 
-            x0 = WIDTH - 70
-            y0 = HEIGHT / 2 + 25
-            x1 = WIDTH - 20
-            y1 = HEIGHT / 2 - 25
-
-            self.canvas.create_oval(x0, y0, x1, y1, fill="orange", outline="black", tags="btn_double")
-            self.canvas.create_text((x0+x1)/2, HEIGHT/2, text="2x", fill="black", activefill="#f63d84", font=("Arial", 14, "bold"), tags="btn_double")
+        self.canvas.create_oval(x0, y0, x1, y1, fill="orange", outline="black", tags="btn_double")
+        self.canvas.create_text((x0 + x1) / 2, HEIGHT / 2, text="2x", fill="black", activefill="#f63d84",
+                                font=("Arial", 14, "bold"), tags="btn_double")
 
     def draw_done_button(self):
         """Draws the button that triggers the end of current turn"""
+        if self.game.game_over:
+            return
         if self.is_multiplayer and self.game.turn != self.my_player_id:
             return
-        y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
-        y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
+        if not self.is_multiplayer and self.ai_match and self.game.turn == 1:
+            return
+
+        y0 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
+        y1 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
         done_btn_x0 = 680
         done_btn_x1 = 730
+
         self.canvas.create_rectangle(done_btn_x0, y0, done_btn_x1, y1, fill="#24A524", outline="black", tags="btn_done")
-        self.canvas.create_text((done_btn_x0 + done_btn_x1)/2, HEIGHT/2, text="DONE", fill="white", font=("Arial", 10, "bold"), tags="btn_done", activefill="#f08888")
+        self.canvas.create_text((done_btn_x0 + done_btn_x1) / 2, HEIGHT / 2, text="DONE", fill="white",
+                                font=("Arial", 10, "bold"), tags="btn_done", activefill="#f08888")
 
     def draw_undo_button(self):
         """Draws the button that triggers undo move"""
+        if self.game.game_over:
+            return
         if self.is_multiplayer and self.game.turn != self.my_player_id:
             return
+        if not self.is_multiplayer and self.ai_match and self.game.turn == 1:
+            return
 
-        y0 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
-        y1 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
+        y0 = HEIGHT / 2 - (DONE_BUTTON_SIZE / 2)
+        y1 = HEIGHT / 2 + (DONE_BUTTON_SIZE / 2)
         undo_btn_x0 = 600
         undo_btn_x1 = 660
 
         self.canvas.create_oval(undo_btn_x0, y0, undo_btn_x1, y1, fill="#d1d1d1", outline="black", tags="btn_undo")
-        self.canvas.create_text((undo_btn_x0 + undo_btn_x1) / 2, (y0 + y1) /2, text="Undo", activefill="#b77145", font=("Arial", 10, "bold"), tags="btn_undo")
+        self.canvas.create_text((undo_btn_x0 + undo_btn_x1) / 2, HEIGHT / 2, text="Undo", activefill="#b77145",
+                                font=("Arial", 10, "bold"), tags="btn_undo")
 
     def draw_save_button(self):
         """Draws the button that triggers storing the game"""
@@ -447,30 +501,55 @@ class BackgammonUI:
                     self.canvas.create_text(center_x, center_y, text="Turn: Black", font=("Arial", 14, "bold"),
                                             fill="black")
 
-        for k in range(self.game.bar[0]):
-            y_pos = center_y - 100
-            self.canvas.create_oval(center_x - CHECKER_RADIUS, y_pos - CHECKER_RADIUS, center_x + CHECKER_RADIUS, y_pos + CHECKER_RADIUS, fill=COLOR_PLAYER0, outline="black")
-        if self.game.bar[0] > 0:
-            self.canvas.create_text(center_x, center_y - 100, text=f"{self.game.bar[0]}", fill="red", font=("Arial", 14, "bold"))
-        for k in range(self.game.bar[1]):
-            y_pos = center_y + 100
-            self.canvas.create_oval(center_x-CHECKER_RADIUS, y_pos-CHECKER_RADIUS, center_x+CHECKER_RADIUS, y_pos+CHECKER_RADIUS, fill=COLOR_PLAYER1, outline="white")
-        if self.game.bar[1] > 0:
-            self.canvas.create_text(center_x, center_y + 100, text=f"{self.game.bar[1]}", fill="red", font=("Arial", 14, "bold"))
+        my_id = self.my_player_id if self.is_multiplayer else 0
+        opp_id = 1 - my_id
 
-        if self.game.off[0] > 0:
-            y_pos = HEIGHT - 70
-            self.canvas.create_text(center_x, y_pos - 40, text="OFF:", fill="black", font=("Arial", 14, "bold"))
-            self.canvas.create_oval(center_x - CHECKER_RADIUS, y_pos - CHECKER_RADIUS, center_x + CHECKER_RADIUS, y_pos + CHECKER_RADIUS, 
-                fill=COLOR_PLAYER0, outline="black", width=2)
-            self.canvas.create_text(center_x, y_pos, text=f"{self.game.off[0]}", fill="black", font=("Arial", 18, "bold"))
-        
-        if self.game.off[1] > 0:
-            y_pos = 100
-            self.canvas.create_text(center_x, y_pos - 40, text="OFF:", fill="black", font=("Arial", 14, "bold"))
-            self.canvas.create_oval(center_x - CHECKER_RADIUS, y_pos - CHECKER_RADIUS, center_x + CHECKER_RADIUS, y_pos + CHECKER_RADIUS, 
-                fill=COLOR_PLAYER1, outline="white", width=2)
-            self.canvas.create_text(center_x, y_pos, text=f"{self.game.off[1]}", fill="#ffffff", font=("Arial", 18, "bold"))
+        # opponent bar always up
+        y_pos_opp = center_y - 100
+        for k in range(self.game.bar[opp_id]):
+            color = COLOR_PLAYER0 if opp_id == 0 else COLOR_PLAYER1
+            outline = "black" if opp_id == 0 else "white"
+            self.canvas.create_oval(center_x - CHECKER_RADIUS, y_pos_opp - CHECKER_RADIUS, center_x + CHECKER_RADIUS,
+                                    y_pos_opp + CHECKER_RADIUS, fill=color, outline=outline)
+        if self.game.bar[opp_id] > 0:
+            self.canvas.create_text(center_x, y_pos_opp, text=f"{self.game.bar[opp_id]}", fill="red",
+                                    font=("Arial", 14, "bold"))
+
+        # my bar always down
+        y_pos_my = center_y + 100
+        for k in range(self.game.bar[my_id]):
+            color = COLOR_PLAYER0 if my_id == 0 else COLOR_PLAYER1
+            outline = "black" if my_id == 0 else "white"
+            self.canvas.create_oval(center_x - CHECKER_RADIUS, y_pos_my - CHECKER_RADIUS, center_x + CHECKER_RADIUS,
+                                    y_pos_my + CHECKER_RADIUS, fill=color, outline=outline)
+        if self.game.bar[my_id] > 0:
+            self.canvas.create_text(center_x, y_pos_my, text=f"{self.game.bar[my_id]}", fill="red",
+                                    font=("Arial", 14, "bold"))
+
+        # opponent house up
+        if self.game.off[opp_id] > 0:
+            y_pos_opp_off = 100
+            color = COLOR_PLAYER0 if opp_id == 0 else COLOR_PLAYER1
+            outline = "black" if opp_id == 0 else "white"
+            text_fill = "black" if opp_id == 0 else "#ffffff"
+            self.canvas.create_text(center_x, y_pos_opp_off - 40, text="OFF:", fill="black", font=("Arial", 14, "bold"))
+            self.canvas.create_oval(center_x - CHECKER_RADIUS, y_pos_opp_off - CHECKER_RADIUS,
+                                    center_x + CHECKER_RADIUS, y_pos_opp_off + CHECKER_RADIUS, fill=color,
+                                    outline=outline, width=2)
+            self.canvas.create_text(center_x, y_pos_opp_off, text=f"{self.game.off[opp_id]}", fill=text_fill,
+                                    font=("Arial", 18, "bold"))
+
+        # my house down
+        if self.game.off[my_id] > 0:
+            y_pos_my_off = HEIGHT - 70
+            color = COLOR_PLAYER0 if my_id == 0 else COLOR_PLAYER1
+            outline = "black" if my_id == 0 else "white"
+            text_fill = "black" if my_id == 0 else "#ffffff"
+            self.canvas.create_text(center_x, y_pos_my_off - 40, text="OFF:", fill="black", font=("Arial", 14, "bold"))
+            self.canvas.create_oval(center_x - CHECKER_RADIUS, y_pos_my_off - CHECKER_RADIUS, center_x + CHECKER_RADIUS,
+                                    y_pos_my_off + CHECKER_RADIUS, fill=color, outline=outline, width=2)
+            self.canvas.create_text(center_x, y_pos_my_off, text=f"{self.game.off[my_id]}", fill=text_fill,
+                                    font=("Arial", 18, "bold"))
 
         self.draw_score()
         self.draw_save_button()
@@ -483,6 +562,12 @@ class BackgammonUI:
 
     def draw_final_of_the_match(self, winner):
         """Draws the pop-up that announces the final of the match"""
+        if self.is_multiplayer:
+            my_id = self.my_player_id
+        else:
+            my_id = 0
+        opp_id = 1 - my_id
+
         if self.is_multiplayer:
             did_i_win = (winner == self.my_player_id)
             win_text = "You win!"
@@ -502,8 +587,16 @@ class BackgammonUI:
         self.canvas.create_rectangle(WIDTH / 2 - 220, HEIGHT / 2 - 120, WIDTH / 2 + 220, HEIGHT / 2 + 120, fill=winner_color, outline="black", width=2)
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 60, text=f"{game_over_text}", fill="black", font=("Arial", 36, "bold"))
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 15, text="Score", fill="#00095e", font=("Arial", 18, "bold"))
-        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 20, text=f"{self.game.match_score[0]} - {self.game.match_score[1]}", fill="#00095e", font=("Arial", 18, "bold"))
-        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 55, text=f"Player {self.game.winner} reached 5 points! The match is over", fill="black", font=("Arial", 14, "bold"))
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 20, text=f"{self.game.match_score[my_id]} - {self.game.match_score[opp_id]}", fill="#00095e", font=("Arial", 18, "bold"))
+        if self.game.winner == my_id:
+            self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 55,
+                                    text=f"You reached 5 points! The match is over", fill="black",
+                                    font=("Arial", 14, "bold"))
+        else:
+            self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 55,
+                                    text=f"Opponent reached 5 points! The match is over", fill="black",
+                                    font=("Arial", 14, "bold"))
+
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 90, text="Go back to menu", fill="black", activefill="#ff1f1f", font=("Arial", 18, "bold"), tags="menu_btn")
 
     def handle_double_offer(self, data):
@@ -523,8 +616,14 @@ class BackgammonUI:
             self.sio.emit('respond_double', {'accept': accepted})
         self.root.after(10, display_popup)
 
-    def draw_game_over(self, winner):
+    def draw_game_over(self, winner, win_conditions="normal"):
         """Draws the pop-ups that announces the final of the game"""
+        if self.is_multiplayer:
+            my_id = self.my_player_id
+        else:
+            my_id = 0
+        opp_id = 1 - my_id
+
         if self.is_multiplayer:
             did_i_win = (winner == self.my_player_id)
             win_text = "You win!"
@@ -544,18 +643,23 @@ class BackgammonUI:
         self.canvas.create_rectangle(WIDTH / 2 - 130, HEIGHT / 2 - 120, WIDTH / 2 + 130, HEIGHT / 2 + 120, fill=winner_color, outline="black", width=2)
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 60, text=f"{game_over_text}", fill="black", font=("Arial", 36, "bold"))
         self.canvas.create_text(WIDTH / 2, HEIGHT / 2 - 15, text="Score", fill="#00095e", font=("Arial", 18, "bold"))
-        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 20, text=f"{self.game.match_score[0]} - {self.game.match_score[1]}", fill="#00095e", font=("Arial", 18, "bold"))
-        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 60, text="Play Again", fill="black", activefill="#ff1f1f", font=("Arial", 18, "bold"), tags="play_again")
+        self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 20, text=f"{self.game.match_score[my_id]} - {self.game.match_score[opp_id]}", fill="#00095e", font=("Arial", 18, "bold"))
+        if win_conditions != "leave":
+            self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 60, text="Play Again", fill="black", activefill="#ff1f1f",
+                                    font=("Arial", 18, "bold"), tags="play_again")
+        else:
+            self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 60, text="Opponent disconnected", fill="red", font=("Arial", 16, "bold"))
 
     def draw_doubling_cube(self):
         """Draws the doubling cube"""
         x_pos = 21
-        
+        my_id = self.my_player_id if self.is_multiplayer else 0
+
         if self.game.cube_owner == -1:
-            y_pos = HEIGHT / 2  
-        elif self.game.cube_owner == 0: 
+            y_pos = HEIGHT / 2
+        elif self.game.cube_owner == my_id:
             y_pos = HEIGHT - 100
-        else: 
+        else:
             y_pos = 100
         size = 18
         
@@ -568,36 +672,40 @@ class BackgammonUI:
         Returns:
             int or None: The board index (0-23), Bar, Off, or None if out of bounds.
         """
+        my_id = self.my_player_id if self.is_multiplayer else 0
+        opp_id = 1 - my_id
+
         if LEFT_BOARD_END_X < x < RIGHT_BOARD_START_X:
             center_x = WIDTH / 2
-            #verific daca alb incearca sa scoata piese
+
             if y > HEIGHT - 150:
-                if self.game.turn == 0:
-                    return -2
-            #verific daca negru incearca sa scoata piese
+                if self.game.turn == my_id:
+                    return -2 if my_id == 0 else 25
+
             if y < 150:
-                if self.game.turn == 1:
-                    return 25
+                if self.game.turn == opp_id:
+                    return -2 if opp_id == 0 else 25
+
             if self.game.bar[self.game.turn] > 0:
-                if self.game.turn == 0:
-                    piece_y = HEIGHT / 2 - 100
-                    bar_index = 24
-                else:
+                if self.game.turn == my_id:
                     piece_y = HEIGHT / 2 + 100
-                    bar_index = -1
-                
+                    bar_index = 24 if my_id == 0 else -1
+                else:
+                    piece_y = HEIGHT / 2 - 100
+                    bar_index = 24 if opp_id == 0 else -1
+
                 if abs(x - center_x) <= CHECKER_RADIUS and abs(y - piece_y) <= CHECKER_RADIUS:
                     return bar_index
             return None
 
         if not (PLAY_AREA_START_Y <= y <= PLAY_AREA_END_Y):
             return None
-        
+
         if x < PLAY_AREA_START_X or x > PLAY_AREA_END_X:
             return None
 
         normalized_x = x - PLAY_AREA_START_X
-        if x > RIGHT_BOARD_START_X: 
+        if x > RIGHT_BOARD_START_X:
             normalized_x = normalized_x - CENTER_BAR_WIDTH
         elif x > LEFT_BOARD_END_X:
             return None
@@ -607,10 +715,12 @@ class BackgammonUI:
         col = max(0, min(11, col))
         visual_col = 11 - col
 
-        if y > HEIGHT / 2: 
-            return visual_col
-        else:                    
-            return 23 - visual_col
+        if y > HEIGHT / 2:
+            visual_index = visual_col
+        else:
+            visual_index = 23 - visual_col
+
+        return self.get_server_index(visual_index)
 
     def on_press(self, event):
         """
@@ -621,6 +731,21 @@ class BackgammonUI:
         - Game controls (Roll, Done, Undo, Save, Double)
         - Checkers (to initiate a drag or select a piece)
         """
+        if self.auth_screen:
+            clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            for item in clicked:
+                tags = self.canvas.gettags(item)
+                if "auth_guest" in tags:
+                    self.auth_screen = False
+                    self.menu = True
+                    self.draw_menu()
+                    if self.auth_callback:
+                        self.auth_callback("guest")
+                    return
+                elif "auth_account" in tags:
+                    messagebox.showinfo("Info", "Auth logic is going to be implemented!")
+            return
+
         if self.menu:
             clicked = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
             for item in clicked:
@@ -678,13 +803,18 @@ class BackgammonUI:
             tags = self.canvas.gettags(item)
             if "menu_btn" in tags:
                 if self.is_multiplayer:
-                    confirm = messagebox.askyesno("Leave Match",
-                                                  "Are you sure you want to leave? You will forfeit the current online match.")
-                    if confirm:
-                        self.sio.emit('leave_match')
+                    if self.game.game_over:
                         self.is_multiplayer = False
                         self.menu = True
                         self.draw_menu()
+                    else:
+                        confirm = messagebox.askyesno("Leave Match",
+                                                      "Are you sure you want to leave? You will forfeit the current online match.")
+                        if confirm:
+                            self.sio.emit('leave_match')
+                            self.is_multiplayer = False
+                            self.menu = True
+                            self.draw_menu()
                 else:
                     if not self.game.game_over:
                         confirm = messagebox.askyesno("Navigate to menu",
@@ -737,17 +867,39 @@ class BackgammonUI:
             elif "play_again" in tags:
                 if self.is_multiplayer:
                     self._multiplayer_split_done = False
-                    self.sio.emit("play_again")
+                    self.canvas.delete("play_again")
+                    self.canvas.create_text(WIDTH / 2, HEIGHT / 2 + 60, text="Waiting for opponent...", fill="yellow",
+                                            font=("Arial", 16, "bold"), tags="waiting_text")
+                    self.root.update()
+                    self.sio.emit("request_play_again")
                 else:
                     self.game.reset_game()
                     self.reset_selection()
-                    # if self.ai_match and self.game.turn == 1:
-                    #     self.root.after(1000, self.ai_perform_move)
-                    # return
                     self.show_split_dice = True
                     self.draw_board()
                     self.root.after(2000, self.end_split_dice)
                     return
+
+            elif "btn_accept_play" in tags:
+                self._multiplayer_split_done = False
+                self.canvas.delete("play_again_popup")
+                self.sio.emit('respond_play_again', {'accept': True})
+                return
+
+            elif "btn_decline_play" in tags:
+                self.canvas.delete("play_again_popup")
+                self.sio.emit('respond_play_again', {'accept': False})
+                self.is_multiplayer = False
+                self.menu = True
+                self.draw_menu()
+                return
+
+            elif "btn_ok_declined" in tags:
+                self.canvas.delete("declined_popup")
+                self.is_multiplayer = False
+                self.menu = True
+                self.draw_menu()
+                return
 
             elif "save_btn" in tags:
                 if self.is_multiplayer:
@@ -1046,3 +1198,57 @@ class BackgammonUI:
             return
         self.game.switch_turn()
         self.draw_board()
+
+    def get_server_index(self, visual_index):
+        if self.is_multiplayer:
+            my_id = self.my_player_id
+        else:
+            my_id = 0
+
+        if my_id == 1:
+            if 0 <= visual_index <= 23:
+                return 23 - visual_index
+        return visual_index
+
+    def handle_play_again_request(self):
+        """Handles the play again request and draws the pop-up"""
+        self.canvas.delete("play_again")
+        center_x = WIDTH / 2
+        center_y = HEIGHT / 2
+
+        self.canvas.create_rectangle(center_x - 200, center_y - 100, center_x + 200, center_y + 100,
+                                     fill="#f0e68c", outline="black", width=3, tags="play_again_popup")
+        self.canvas.create_text(center_x, center_y - 40, text="Opponent wants to play again.\nDo you accept?",
+                                fill="black", font=("Arial", 16, "bold"), justify="center", tags="play_again_popup")
+
+        # yes btn
+        self.canvas.create_rectangle(center_x - 120, center_y + 20, center_x - 20, center_y + 60,
+                                     fill="#24A524", outline="black", width=2,
+                                     tags=("play_again_popup", "btn_accept_play"))
+        self.canvas.create_text(center_x - 70, center_y + 40, text="YES", fill="white", font=("Arial", 14, "bold"),
+                                tags=("play_again_popup", "btn_accept_play"))
+
+        # no btn
+        self.canvas.create_rectangle(center_x + 20, center_y + 20, center_x + 120, center_y + 60,
+                                     fill="#ff5656", outline="black", width=2,
+                                     tags=("play_again_popup", "btn_decline_play"))
+        self.canvas.create_text(center_x + 70, center_y + 40, text="NO", fill="white", font=("Arial", 14, "bold"),
+                                tags=("play_again_popup", "btn_decline_play"))
+
+    def handle_play_again_declined(self):
+        """Handles the play again request declined by the opponent"""
+        self.canvas.delete("waiting_text")
+
+        center_x = WIDTH / 2
+        center_y = HEIGHT / 2
+
+        self.canvas.create_rectangle(center_x - 200, center_y - 80, center_x + 200, center_y + 80,
+                                     fill="#ff5656", outline="black", width=3, tags="declined_popup")
+        self.canvas.create_text(center_x, center_y - 20, text="Opponent declined to play again.",
+                                fill="black", font=("Arial", 16, "bold"), tags="declined_popup")
+
+        self.canvas.create_rectangle(center_x - 60, center_y + 20, center_x + 60, center_y + 60,
+                                     fill="#3f1405", outline="white", width=2,
+                                     tags=("declined_popup", "btn_ok_declined"))
+        self.canvas.create_text(center_x, center_y + 40, text="OK", fill="white", font=("Arial", 14, "bold"),
+                                tags=("declined_popup", "btn_ok_declined"))
