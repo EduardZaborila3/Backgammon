@@ -78,7 +78,7 @@ def db_authenticate_user(token):
             row = cursor.fetchone()
 
             if row:
-                username = row[1] if row[1] else username = f"Guest_{row[0]}"
+                username = row[1] if row[1] else f"Guest_{row[0]}"
                 games_played = row[2] if row[2] is not None else 0
                 games_won = row[3] if row[3] is not None else 0
 
