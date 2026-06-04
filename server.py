@@ -17,7 +17,6 @@ connected_users = {}
 def get_db_connection():
     try:
         conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
-        conn.autocommit = True
         return conn
     except Exception as e:
         print(f"Critical error: Cant connect to the database. Details: {e}")
@@ -90,6 +89,7 @@ def db_authenticate_user(token):
                 new_id = new_user[0]
                 new_username = f"Guest_{new_id}"
                 cursor.execute("UPDATE users SET username = %s where id = %s", (new_username, new_id))
+                conn.commit()
                 print(f"Created new user in the database: ID {new_id}")
                 return {'id': new_id, 'username': new_username, 'games_played': 0, 'games_won': 0}
     except Exception as err:
@@ -113,7 +113,7 @@ async def register_credentials(sid, data):
     try:
         with conn.cursor() as cursor:
             cursor.execute("UPDATE users SET email = %s, password = %s WHERE id = %s", (email, password, user_id))
-
+        conn.commit()
         print(f"[{sid}] successfully saved credentials (Email: {email}).")
     except Exception as e:
         print(f"Error saving credentials: {e}")
@@ -131,7 +131,7 @@ async def db_update_username(sid, data):
     try:
         with conn.cursor() as cursor:
             cursor.execute("UPDATE users SET username = %s WHERE id = %s", (new_name, user_id))
-
+        conn.commit()
         connected_users[sid]['username'] = new_name
         print(f"[{sid}] changed his name in {new_name}")
         await sio.emit('profile_data_update', {
@@ -150,6 +150,7 @@ def db_update_stats(db_id, is_winner):
                 cursor.execute("UPDATE users SET games_played = games_played + 1, games_won = games_won + 1 WHERE id = %s", (db_id,))
             else:
                 cursor.execute("UPDATE users SET games_played = games_played + 1 WHERE id = %s", (db_id,))
+            conn.commit()
             print(f"Updated games played for DB_ID {db_id}")
     except Exception as err:
         print(f"Database update error: {err}")
