@@ -96,6 +96,29 @@ def db_authenticate_user(token):
         print(f"Database authentication error: {err}")
         return None
 
+
+@sio.event
+async def register_credentials(sid, data):
+    """Saves the user's email and password to the database"""
+    if sid not in connected_users:
+        return
+
+    email = data.get('email')
+    password = data.get('password')
+    user_id = connected_users[sid].get('id')
+
+    if not email or not password:
+        return
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET email = %s, password = %s WHERE id = %s", (email, password, user_id))
+
+        print(f"[{sid}] successfully saved credentials (Email: {email}).")
+    except Exception as e:
+        print(f"Error saving credentials: {e}")
+
+@sio.event
 async def db_update_username(sid, data):
     """Updates the user's name in the database and active memory"""
     if sid not in connected_users:
