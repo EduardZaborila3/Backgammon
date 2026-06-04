@@ -73,16 +73,19 @@ def db_authenticate_user(token):
      If the token can't be found in the database, this means a new user has to be created."""
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT id, username, games_played, games_won FROM users WHERE device_token = CAST(%s AS uuid)", (token,))
+            cursor.execute("SELECT id, username, games_played, games_won, email FROM users WHERE device_token = CAST(%s AS uuid)", (token,))
             row = cursor.fetchone()
 
             if row:
                 username = row[1] if row[1] else f"Guest_{row[0]}"
                 games_played = row[2] if row[2] is not None else 0
                 games_won = row[3] if row[3] is not None else 0
-
+                if row[4]:
+                    has_credentials = True
+                else:
+                    has_credentials = False
                 print(f"User {username} is online!")
-                return {'id': row[0], 'username': username, 'games_played': games_played, 'games_won': games_won}
+                return {'id': row[0], 'username': username, 'games_played': games_played, 'games_won': games_won, 'has_credentials': has_credentials}
             else:
                 cursor.execute("INSERT INTO users (device_token) VALUES (CAST(%s AS uuid)) RETURNING id", (token,))
                 new_user = cursor.fetchone()
@@ -91,7 +94,7 @@ def db_authenticate_user(token):
                 cursor.execute("UPDATE users SET username = %s where id = %s", (new_username, new_id))
                 conn.commit()
                 print(f"Created new user in the database: ID {new_id}")
-                return {'id': new_id, 'username': new_username, 'games_played': 0, 'games_won': 0}
+                return {'id': new_id, 'username': new_username, 'games_played': 0, 'games_won': 0, 'has_credentials': False}
     except Exception as err:
         print(f"Database authentication error: {err}")
         return None
@@ -114,6 +117,13 @@ async def register_credentials(sid, data):
         with conn.cursor() as cursor:
             cursor.execute("UPDATE users SET email = %s, password_hash = %s WHERE id = %s", (email, password, user_id))
         conn.commit()
+        connected_users[sid]['has_credentials'] = True
+        await sio.emit('profile_data_update', {
+            'username': connected_users[sid]['username'],
+            'games_played': connected_users[sid]['games_played'],
+            'games_won': connected_users[sid]['games_won'],
+            'has_credentials': True
+        }, to=sid)
         print(f"[{sid}] successfully saved credentials (Email: {email}).")
     except Exception as e:
         print(f"Error saving credentials: {e}")
@@ -208,13 +218,15 @@ async def connect(sid, environ, auth):
         'username': user_data['username'],
         'id': user_data['id'],
         'games_played': user_data['games_played'],
-        'games_won': user_data['games_won']
+        'games_won': user_data['games_won'],
+        'has_credentials': user_data['has_credentials']
     }
 
     await sio.emit('profile_data_update', {
         'username': user_data['username'],
         'games_played': user_data['games_played'],
-        'games_won': user_data['games_won']
+        'games_won': user_data['games_won'],
+        'has_credentials': user_data['has_credentials']
     }, to=sid)
 
     print(f"[{sid}] Authenticated successfully!")
