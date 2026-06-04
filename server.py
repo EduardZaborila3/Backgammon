@@ -112,7 +112,7 @@ async def register_credentials(sid, data):
 
     try:
         with conn.cursor() as cursor:
-            cursor.execute("UPDATE users SET email = %s, password = %s WHERE id = %s", (email, password, user_id))
+            cursor.execute("UPDATE users SET email = %s, password_hash = %s WHERE id = %s", (email, password, user_id))
         conn.commit()
         print(f"[{sid}] successfully saved credentials (Email: {email}).")
     except Exception as e:
