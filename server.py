@@ -96,6 +96,29 @@ def db_authenticate_user(token):
         print(f"Database authentication error: {err}")
         return None
 
+async def db_update_username(sid, data):
+    """Updates the user's name in the database and active memory"""
+    if sid not in connected_users:
+        return
+
+    new_name = data.get('new_username')
+    if not new_name:
+        return
+    user_id = connected_users[sid].get('id')
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET username = %s WHERE id = %s", (new_name, user_id))
+
+        connected_users[sid]['username'] = new_name
+        print(f"[{sid}] changed his name in {new_name}")
+        await sio.emit('profile_data_update', {
+            'username': connected_users[sid]['username'],
+            'games_played': connected_users[sid]['games_played'],
+            'games_won': connected_users[sid]['games_won']
+        }, to=sid)
+    except Exception as e:
+        print(f"Error updating the name: {e}")
+
 def db_update_stats(db_id, is_winner):
     """Updates in the database played and won games"""
     try:
