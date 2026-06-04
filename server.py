@@ -3,13 +3,13 @@ import psycopg2
 import socketio
 from aiohttp import web
 from dotenv import load_dotenv
-from sympy.codegen.fnodes import use_rename
 
 from logic import BackgammonLogic
 import uuid
 from ai import TDGammonNetwork, calculate_best_move
 import torch
 import asyncio
+import random
 
 load_dotenv()
 connected_users = {}
@@ -96,6 +96,42 @@ def db_authenticate_user(token):
         print(f"Database authentication error: {err}")
         return None
 
+def db_update_stats(db_id, is_winner):
+    """Updates in the database played and won games"""
+    try:
+        with conn.cursor() as cursor:
+            if is_winner:
+                cursor.execute("UPDATE users SET games_played = games_played + 1, games_won = games_won + 1 WHERE id = %s", (db_id,))
+            else:
+                cursor.execute("UPDATE users SET games_played = games_played + 1 WHERE id = %s", (db_id,))
+            print(f"Updated games played for DB_ID {db_id}")
+    except Exception as err:
+        print(f"Database update error: {err}")
+
+async def process_game_end(room_id, game, disconnected_sid=None):
+    """Updates once per game, also when a player leaves the game"""
+    if getattr(game, 'stats_saved', False):
+        return
+    game.stats_saved = True
+
+    for p_sid, p_data in players.items():
+        if p_data['room'] == room_id:
+            user_db_id = connected_users[p_sid].get('id')
+            if disconnected_sid:
+                is_win = (p_sid != disconnected_sid)
+            else:
+                is_win = (p_data['color'] == game.winner)
+            if user_db_id:
+                await asyncio.to_thread(db_update_stats, user_db_id, is_win)
+                connected_users[p_sid]['games_played'] += 1
+                if is_win:
+                    connected_users[p_sid]['games_won'] += 1
+
+                await sio.emit('profile_data_update', {
+                    'username': connected_users[p_sid]['username'],
+                    'games_played': connected_users[p_sid]['games_played'],
+                    'games_won': connected_users[p_sid]['games_won']
+                }, to=p_sid)
 
 @sio.event
 async def connect(sid, environ, auth):
@@ -120,7 +156,13 @@ async def connect(sid, environ, auth):
     if not user_data:
         raise socketio.exceptions.ConnectionRefusedError('Database error')
 
-    connected_users[sid] = {'token': token, 'username': f"Guest_{sid[:4]}"}
+    connected_users[sid] = {
+        'token': token,
+        'username': user_data['username'],
+        'id': user_data['id'],
+        'games_played': user_data['games_played'],
+        'games_won': user_data['games_won']
+    }
 
     await sio.emit('profile_data_update', {
         'username': user_data['username'],
@@ -143,6 +185,11 @@ async def disconnect(sid):
 
     if sid in players:
         room_id = players[sid]['room']
+
+        game = games.get(room_id)
+        if game and not game.game_over:
+            game.game_over = True
+            await process_game_end(room_id, game, disconnected_sid=sid)
         await sio.emit('Opponent disconnected', room=room_id, skip_sid = sid)
         if room_id in games:
             del games[room_id]
@@ -169,12 +216,24 @@ async def join_matchmaking(sid):
         await sio.enter_room(p2_sid, room_id)
 
         games[room_id] = BackgammonLogic()
-        players[p1_sid] = {'room': room_id, 'color': 0}
-        players[p2_sid] = {'room': room_id, 'color': 1}
+        p1_color = random.choice([0, 1])
+        p2_color = 1 - p1_color
+        players[p1_sid] = {'room': room_id, 'color': p1_color}
+        players[p2_sid] = {'room': room_id, 'color': p2_color}
         print(f"Game started between [{p1_sid}] and [{p2_sid}] in room {room_id}.")
+        print(f"[{p1_sid}] is color {p1_color}, [{p2_sid}] is color {p2_color}.")
 
-        await sio.emit('assign_player', {'player_id': 0}, to=p1_sid)
-        await sio.emit('assign_player', {'player_id': 1}, to=p2_sid)
+        p1_username = connected_users[p1_sid]['username']
+        p2_username = connected_users[p2_sid]['username']
+        if p1_color == 0:
+            p0_name = p1_username
+            p1_name = p2_username
+        else:
+            p0_name = p2_username
+            p1_name = p1_username
+
+        await sio.emit('assign_player', {'player_id': p1_color, 'p0_name': p0_name, 'p1_name': p1_name}, to=p1_sid)
+        await sio.emit('assign_player', {'player_id': p2_color, 'p0_name': p0_name, 'p1_name': p1_name}, to=p2_sid)
 
         state = get_game_state(games[room_id])
         await sio.emit('game_state_update', state, room=room_id)
@@ -247,6 +306,9 @@ async def make_move(sid, data):
         await sio.emit('game_state_update', get_game_state(game), room=p_info['room'])
     else:
         print(f"Move denied! It is not players's {p_info.get('color')} turn")
+
+    if game.game_over:
+        await process_game_end(p_info['room'], game)
 
 @sio.event
 async def end_turn(sid):
@@ -330,11 +392,16 @@ async def respond_double(sid, data):
         game.winner = 1 - p_info['color']
         game.end_game()
         await sio.emit('game_state_update', get_game_state(game), room=room_id)
+        await process_game_end(room_id, game)
 
 @sio.event
 async def leave_match(sid):
     if sid in players:
         room_id = players[sid]['room']
+        game = games.get(room_id)
+        if game and not game.game_over:
+            game.game_over = True
+            await process_game_end(room_id, game, disconnected_sid=sid)
         await sio.emit('opponent_disconnected', room=room_id, skip_sid=sid)
         if room_id in games:
             del games[room_id]
