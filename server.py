@@ -139,7 +139,7 @@ async def login_account(sid, data):
 
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT id, username, games_played, games_won, password FROM users WHERE email = %s",
+            cursor.execute("SELECT id, username, games_played, games_won, password_hash FROM users WHERE email = %s",
                            (email,))
             row = cursor.fetchone()
             if not row:
