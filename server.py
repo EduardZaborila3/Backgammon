@@ -69,7 +69,7 @@ def get_game_state(game):
         'has_rolled': game.has_rolled
     }
 
-def db_authenticate_user(token):
+def db_authenticate_user(token, is_new_guest=False):
     """Searches the token in the database. If the token exists, then the user is free to play the game.
      If the token can't be found in the database, this means a new user has to be created."""
     try:
@@ -88,14 +88,18 @@ def db_authenticate_user(token):
                 print(f"User {username} is online!")
                 return {'id': row[0], 'username': username, 'games_played': games_played, 'games_won': games_won, 'has_credentials': has_credentials}
             else:
-                cursor.execute("INSERT INTO users (device_token) VALUES (CAST(%s AS uuid)) RETURNING id", (token,))
-                new_user = cursor.fetchone()
-                new_id = new_user[0]
-                new_username = f"Guest_{new_id}"
-                cursor.execute("UPDATE users SET username = %s where id = %s", (new_username, new_id))
-                conn.commit()
-                print(f"Created new user in the database: ID {new_id}")
-                return {'id': new_id, 'username': new_username, 'games_played': 0, 'games_won': 0, 'has_credentials': False}
+                if is_new_guest:
+                    cursor.execute("INSERT INTO users (device_token) VALUES (CAST(%s AS uuid)) RETURNING id", (token,))
+                    new_user = cursor.fetchone()
+                    new_id = new_user[0]
+                    new_username = f"Guest_{new_id}"
+                    cursor.execute("UPDATE users SET username = %s where id = %s", (new_username, new_id))
+                    conn.commit()
+                    print(f"Created new user in the database: ID {new_id}")
+                    return {'id': new_id, 'username': new_username, 'games_played': 0, 'games_won': 0,
+                            'has_credentials': False}
+                else:
+                    return None
     except Exception as err:
         print(f"Database authentication error: {err}")
         return None
@@ -264,8 +268,7 @@ async def connect(sid, environ, auth):
         print(f"[{sid}] Connection rejected: No device token provided")
         raise socketio.exceptions.ConnectionRefusedError('Missing token')
     token = auth['device_token']
-    print(f"[{sid}] connected to the server with token: {token}")
-
+    is_new_guest = auth.get('is_new_guest', False)
     user_already_online = False
     for active_sid, data in connected_users.items():
         if data.get('token') == token:
@@ -273,13 +276,12 @@ async def connect(sid, environ, auth):
             break
 
     if user_already_online:
-        print(f"[{sid}] Connection rejected: Account is already active in another session.")
         raise socketio.exceptions.ConnectionRefusedError('Account already active')
 
-    user_data = await asyncio.to_thread(db_authenticate_user, token)
+    user_data = await asyncio.to_thread(db_authenticate_user, token, is_new_guest)
 
     if not user_data:
-        raise socketio.exceptions.ConnectionRefusedError('Database error')
+        raise socketio.exceptions.ConnectionRefusedError('Token invalid')
 
     connected_users[sid] = {
         'token': token,
@@ -287,14 +289,14 @@ async def connect(sid, environ, auth):
         'id': user_data['id'],
         'games_played': user_data['games_played'],
         'games_won': user_data['games_won'],
-        'has_credentials': user_data['has_credentials']
+        'has_credentials': user_data.get('has_credentials', False)
     }
 
     await sio.emit('profile_data_update', {
         'username': user_data['username'],
         'games_played': user_data['games_played'],
         'games_won': user_data['games_won'],
-        'has_credentials': user_data['has_credentials']
+        'has_credentials': user_data.get('has_credentials', False)
     }, to=sid)
 
     print(f"[{sid}] Authenticated successfully!")
