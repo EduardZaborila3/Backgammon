@@ -10,6 +10,7 @@ from ai import TDGammonNetwork, calculate_best_move
 import torch
 import asyncio
 import random
+import bcrypt
 
 load_dotenv()
 connected_users = {}
@@ -99,6 +100,73 @@ def db_authenticate_user(token):
         print(f"Database authentication error: {err}")
         return None
 
+
+async def register_account(sid, data):
+    """Creates a new account"""
+    email = data.get('email')
+    password = data.get('password')
+    token = data.get('device_token')
+    if not email or not password:
+        await sio.emit('auth_error', {'message': 'Fill in all fields!'}, to=sid)
+        return
+
+    hashed_pwd = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            if cursor.fetchone():
+                await sio.emit('auth_error', {'message': 'An account with this email already exists!'}, to=sid)
+                return
+            cursor.execute("UPDATE users SET email = %s, password = %s WHERE device_token = CAST(%s AS uuid)",
+                           (email, hashed_pwd, token))
+            conn.commit()
+
+        await sio.emit('auth_success', {'message': 'Account successfully created!'}, to=sid)
+    except Exception as e:
+        print(f"Register error: {e}")
+        await sio.emit('auth_error', {'message': 'Server error.'}, to=sid)
+
+
+@sio.event
+async def login_account(sid, data):
+    email = data.get('email')
+    password = data.get('password')
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, username, games_played, games_won, password FROM users WHERE email = %s",
+                           (email,))
+            row = cursor.fetchone()
+            if not row:
+                await sio.emit('auth_error', {'message': 'Wrong email or password!'}, to=sid)
+                return
+            db_id, db_username, db_played, db_won, db_hashed_pwd = row
+
+            if not bcrypt.checkpw(password.encode('utf-8'), db_hashed_pwd.encode('utf-8')):
+                await sio.emit('auth_error', {'message': 'Wrong email or password!'}, to=sid)
+                return
+
+            connected_users[sid] = {
+                'token': connected_users[sid]['token'],
+                'username': db_username,
+                'id': db_id,
+                'games_played': db_played,
+                'games_won': db_won,
+                'has_credentials': True
+            }
+
+            await sio.emit('profile_data_update', {
+                'username': db_username,
+                'games_played': db_played,
+                'games_won': db_won,
+                'has_credentials': True
+            }, to=sid)
+
+            await sio.emit('auth_success', {'message': 'Logged in successfully!'}, to=sid)
+
+    except Exception as e:
+        print(f"Login error: {e}")
 
 @sio.event
 async def register_credentials(sid, data):
