@@ -196,7 +196,7 @@ async def register_credentials(sid, data):
 
     try:
         with conn.cursor() as cursor:
-            cursor.execute("UPDATE users SET email = %s, password_hash = %s WHERE id = %s", (email, password, user_id))
+            cursor.execute("UPDATE users SET email = %s, password_hash = %s WHERE id = %s", (email, hashed_pwd, user_id))
         conn.commit()
         connected_users[sid]['has_credentials'] = True
         await sio.emit('profile_data_update', {
