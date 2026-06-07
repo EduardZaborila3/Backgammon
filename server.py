@@ -186,13 +186,13 @@ async def register_credentials(sid, data):
     """Saves the user's email and password to the database"""
     if sid not in connected_users:
         return
-
     email = data.get('email')
     password = data.get('password')
     user_id = connected_users[sid].get('id')
-
     if not email or not password:
         return
+
+    hashed_pwd = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
     try:
         with conn.cursor() as cursor:
@@ -277,6 +277,9 @@ async def connect(sid, environ, auth):
         print(f"[{sid}] Connection rejected: No device token provided")
         raise socketio.exceptions.ConnectionRefusedError('Missing token')
     token = auth['device_token']
+    if auth.get('action') == 'login':
+        connected_users[sid] = {'token': token, 'username': 'Pending...', 'id': None}
+        return
     is_new_guest = auth.get('is_new_guest', False)
     user_already_online = False
     for active_sid, data in connected_users.items():
