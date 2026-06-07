@@ -108,11 +108,12 @@ def db_authenticate_user(token, is_new_guest=False):
 @sio.event
 async def register_account(sid, data):
     """Creates a new account"""
+    username = data.get('username')
     email = data.get('email')
     password = data.get('password')
     token = data.get('device_token')
 
-    if not email or not password:
+    if not username or not email or not password:
         await sio.emit('auth_error', {'message': 'Fill in all fields!'}, to=sid)
         return
 
@@ -125,10 +126,17 @@ async def register_account(sid, data):
             if cursor.fetchone():
                 await sio.emit('auth_error', {'message': 'An account with this email already exists!'}, to=sid)
                 return
-            cursor.execute("UPDATE users SET email = %s, password_hash = %s WHERE device_token = CAST(%s AS uuid)",
-                           (email, hashed_pwd, token))
+            cursor.execute("UPDATE users SET username=%s, email = %s, password_hash = %s WHERE device_token = CAST(%s AS uuid)",
+                           (username, email, hashed_pwd, token))
             conn.commit()
-
+            connected_users[sid]['username'] = username
+            connected_users[sid]['has_credentials'] = True
+        await sio.emit('profile_data_update', {
+            'username': connected_users[sid]['username'],
+            'games_played': connected_users[sid]['games_played'],
+            'games_won': connected_users[sid]['games_won'],
+            'has_credentials': True
+        }, to=sid)
         await sio.emit('auth_success', {'message': 'Account successfully created!'}, to=sid)
     except Exception as e:
         print(f"Register error: {e}")
@@ -537,6 +545,19 @@ async def leave_match(sid):
             del games[room_id]
         del players[sid]
         await sio.leave_room(sid, room_id)
+
+@sio.event
+async def skip_turn_closed_board(sid):
+    if sid not in players:
+        return
+    p_info = players[sid]
+    game = games.get(p_info['room'])
+    if game.turn == p_info.get('color'):
+        if game.bar[game.turn] > 0 and game.is_entry_blocked(game.turn):
+            print(f"Player {game.turn} has entry blocked. Switching turn...")
+            game.dice = []
+            game.switch_turn()
+            await sio.emit('game_state_update', get_game_state(game), room=p_info['room'])
 
 if __name__ == '__main__':
     # print("Server started on port 5555...")
