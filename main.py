@@ -65,17 +65,53 @@ def on_play_again_declined(data):
 def on_profile_data_update(data):
     message_queue.put(("profile_update", data))
 
+@sio.on('auth_error')
+def on_auth_error(data):
+    message_queue.put(("auth_error", data))
 
-def start_server_connection(auth_type):
+@sio.on('auth_success')
+def on_auth_success(data):
+    message_queue.put(("auth_success", data))
+
+def start_server_connection(auth_type, username=None, email=None, password=None):
     """Function called by the UI after the user chooses how to connect"""
-    if auth_type == "guest":
-        token = get_or_create_device_token()
-        t = threading.Thread(target=network_thread, args=(SERVER_URL, token), daemon=True)
-        t.start()
+    if auth_type == "logout":
+        auth.delete_local_token()
+        if sio.connected:
+            sio.disconnect()
+        app.has_credentials = False
+        app.username = "Loading..."
+        app.games_played = 0
+        app.games_won = 0
+        app.profile_screen = False
+        app.menu = False
+        app.auth_screen = True
+        app.draw_auth_menu()
+        return
 
-    elif auth_type == "account":
-        # email / passsword logic
-        pass
+    token = auth.get_or_create_device_token()
+    is_new = True if auth_type in ["guest", "register"] else False
+    if auth_type == "login":
+        is_new = False
+
+    def connect_and_auth():
+        try:
+            server_address = SERVER_URL if SERVER_URL.startswith("http") else "http://" + SERVER_URL
+            if not sio.connected:
+                sio.connect(server_address, auth={"device_token": token, "is_new_guest": is_new, "action": auth_type})
+            if auth_type == "login":
+                sio.emit('login_account', {'email': email, 'password': password})
+            elif auth_type == "register":
+                sio.emit('register_account', {'username': username, 'email': email, 'password': password, 'device_token': token})
+
+            sio.wait()
+        except socketio.exceptions.ConnectionError as e:
+            pass
+        except Exception as e:
+            message_queue.put(("connection error", str(e)))
+
+    t = threading.Thread(target=connect_and_auth, daemon=True)
+    t.start()
 
 
 def network_thread(server_address, token):
@@ -100,6 +136,10 @@ def process_messages(root, app):
 
             if msg_type == "assign":
                 app.my_player_id = data['player_id']
+
+                app.player0_name = data.get('p0_name', "Player 0")
+                app.player1_name = data.get('p1_name', "Player 1")
+
                 color = "White (0)" if app.my_player_id == 0 else "Black (1)"
                 root.title(f"BACKGAMMON - PLAYER: {color}")
 
@@ -109,13 +149,25 @@ def process_messages(root, app):
             elif msg_type == "disconnect":
                 app.game.game_over = True
                 app.game.winner = app.my_player_id
+                app.game.match_score[app.my_player_id] += app.game.cube_value
                 app.draw_game_over(winner=app.my_player_id, win_conditions="leave")
 
             elif msg_type == "connection error":
                 error_msg = str(data)
 
-                if "Account already active" in error_msg:
-                    messagebox.showerror("Acces Denied", "This account is already active in another window or device. \nThe game will close.")
+                if "Token invalid" in error_msg:
+                    import auth
+                    auth.delete_local_token()
+                    messagebox.showwarning("Session Expired",
+                                           "Your account is no longer active on server. Please create a new account.")
+                    app.menu = False
+                    app.auth_screen = True
+                    app.draw_auth_menu()
+                    if app.sio.connected:
+                        app.sio.disconnect()
+                elif "Account already active" in error_msg:
+                    messagebox.showerror("Acces Denied",
+                                         "This account is already active in another window or device. \nThe game will close.")
                     root.destroy()
                     exit()
                 else:
@@ -143,9 +195,22 @@ def process_messages(root, app):
                 app.username = data['username']
                 app.games_played = data['games_played']
                 app.games_won = data['games_won']
-
+                app.has_credentials = data.get('has_credentials', getattr(app, 'has_credentials', False))
                 if app.profile_screen:
                     app.draw_profile_menu()
+
+            elif msg_type == "auth_error":
+                messagebox.showerror("Authentication error", data['message'])
+                app.menu = False
+                app.auth_screen = True
+                app.draw_auth_menu()
+                sio.disconnect()
+
+            elif msg_type == "auth_success":
+                messagebox.showinfo("Success", data['message'])
+                app.auth_screen = False
+                app.menu = True
+                app.draw_menu()
 
     except queue.Empty:
         pass

@@ -2,6 +2,8 @@ import random
 import json
 import os
 import copy
+from importlib.metadata import entry_points
+
 
 class BackgammonLogic:
     """
@@ -36,6 +38,7 @@ class BackgammonLogic:
         self.cube_value = 1
         # initial nu are nimeni cubul
         self.cube_owner = -1
+        self.stats_saved = False
         self.init_board()
 
         if not skip_initial_roll:
@@ -132,46 +135,41 @@ class BackgammonLogic:
                     return True
         return False
 
-    def get_valid_moves(self, start_index):
-        """
-        Calculates all legal moves for a specific checker
-        Args: 
-            start_index (int): The board index (0 - 23), Bar (-1 or 24)
+    def is_entry_blocked(self, player_id):
+        if player_id == 0:
+            entry_points = range(18, 24)
+        else:
+            entry_points = range(0, 6)
+        for i in entry_points:
+            if not self.board[i] or self.board[i][0] == player_id or len(self.board[i]) == 1:
+                return False
+        return True
 
-        Returns:
-            list: List of tuples containing (target_index, used_dce_path)
-                Returns an empty list if no moves are possible.
-        """
+    def get_valid_moves(self, start_index):
+        """Calculates all legal moves for a specific checker"""
         moves = {}
 
         is_bar_entry = False
         if start_index == 24 or start_index == -1:
             is_bar_entry = True
+
+        if self.bar[self.turn] > 0 and not is_bar_entry:
+            return []
+
         if self.bar[self.turn] > 0:
-            if not is_bar_entry:
-                return []
-            if self.turn == 0:
-                correct_bar_index = 24
-            else:
-                correct_bar_index = -1
+            correct_bar_index = 24 if self.turn == 0 else -1
             if start_index != correct_bar_index:
                 return []
-            
+
         if not is_bar_entry:
             if not (0 <= start_index < 24):
                 return []
             point = self.board[start_index]
             if not point or point[0] != self.turn:
                 return []
-        
-        if self.turn == 0:
-            direction = -1
-            #iau index in afara jocului pt piesele scoase (beared-off) la alb
-            off_target = -2
-        else:
-            direction = 1
-            #index in afara pt piesele scoase la negru
-            off_target = 25
+
+        direction = -1 if self.turn == 0 else 1
+        off_target = -2 if self.turn == 0 else 25
         can_bear = self.can_bear_off(self.turn)
 
         def find_paths(current_index, available_dice, used_dice_path):
@@ -179,11 +177,13 @@ class BackgammonLogic:
             for die in unique_dice:
                 target = current_index + (die * direction)
                 valid_move = False
+
                 if 0 <= target <= 23:
                     target_point = self.board[target]
-                    if not target_point or target_point[0] == self.turn or (len(target_point) == 1 and target_point[0] != self.turn):
+                    if not target_point or target_point[0] == self.turn or (
+                            len(target_point) == 1 and target_point[0] != self.turn):
                         valid_move = True
-                    
+
                     if valid_move:
                         new_path = used_dice_path + [die]
                         if target not in moves:
@@ -191,13 +191,15 @@ class BackgammonLogic:
                         elif len(new_path) < len(moves[target]):
                             moves[target] = new_path
                         can_continue = (not target_point) or (target_point[0] == self.turn)
+                        if is_bar_entry and self.bar[self.turn] > 1:
+                            can_continue = False
 
                         if can_continue:
                             remaining_dice = list(available_dice)
                             remaining_dice.remove(die)
                             if remaining_dice:
                                 find_paths(target, remaining_dice, new_path)
-                # verific daca pot scoate piese din casa
+
                 elif can_bear:
                     exact_die = False
                     if self.turn == 0:
@@ -222,11 +224,11 @@ class BackgammonLogic:
                                     break
                             if highest_piece:
                                 exact_die = True
-                    
+
                     if exact_die:
                         new_path = used_dice_path + [die]
                         moves[off_target] = new_path
-            
+
         find_paths(start_index, self.dice, [])
         return list(moves.items())
     
@@ -245,6 +247,10 @@ class BackgammonLogic:
             used_dice (list): The specific dice values used to make this move
         """
         self.save_board_state()
+        if self.bar[self.turn] > 0 and start_index not in [24, -1]:
+            print("Illegal move blocked")
+            self.history.pop()
+            return
         if start_index == 24 or start_index == -1:
             self.bar[self.turn] -= 1
             # print(f"Player {self.turn} entered from bar")
@@ -254,7 +260,6 @@ class BackgammonLogic:
         if target_index == -2 or target_index == 25:
             self.off[p_id] += 1
             # print(f"Player {p_id} sent a piece off. Total off: {self.off[p_id]}")
-            
         else:
             target_point = self.board[target_index]
             if target_point and target_point[0] != p_id:
@@ -262,7 +267,6 @@ class BackgammonLogic:
                 hit_piece = target_point.pop()
                 self.bar[1 - p_id] += 1
                 # print(f"Player {1-p_id} piece was sent to bar")
-                
             self.board[target_index].append(p_id)
         
         for die in used_dice:
@@ -429,25 +433,25 @@ class BackgammonLogic:
         """
         loser = 1 - self.winner
         piece_in_winner_home = False
-        points = 1
 
-        # daca cel care pierde nu a apucat sa scoata vreo piesa e marti
-        if self.off[loser] == 0:
-            if self.winner == 0:
-                winner_home = range(0, 6)
-            else:
-                winner_home = range(18, 24)
-            # verific daca loser ul are piese in casa adversa
-            for i in winner_home:
-                if self.board[i] and self.board[i][0] == loser:
-                    piece_in_winner_home = True  
+        # if the loser managed to bear off at least one checker, it is normal victory (1 point)
+        if self.off[loser] > 0:
+            return 1 * self.cube_value
 
-            if self.bar[loser] > 0 or piece_in_winner_home:
-                points = 3
-            points = 2
-        points = 1
+        # if we get here, this means that the loser didnt manage to bear off any checker
+        if self.winner == 0:
+            winner_home = range(0, 6)
+        else:
+            winner_home = range(18,24)
 
-        return points * self.cube_value
+        for i in winner_home:
+            if self.board[i] and self.board[i][0] == loser:
+                piece_in_winner_home = True
+
+        if self.bar[loser] > 0 or piece_in_winner_home:
+            return 3 * self.cube_value
+
+        return 2 * self.cube_value
     
     def reset_game(self):
         """Resets game and score"""
