@@ -4,6 +4,7 @@ import socketio
 from aiohttp import web
 from dotenv import load_dotenv
 
+import ai
 from logic import BackgammonLogic
 import uuid
 from ai import TDGammonNetwork, calculate_best_move
@@ -11,6 +12,9 @@ import torch
 import asyncio
 import random
 import bcrypt
+
+torch.set_num_threads(1)
+ai_lock = asyncio.Lock()
 
 load_dotenv()
 connected_users = {}
@@ -414,42 +418,52 @@ async def request_ai_move(sid, state_data):
     difficulty = state_data.get('difficulty', 'hard')
     print(f"[{sid}] Server is calculating AI move...")
 
-    temp_game = BackgammonLogic()
-    temp_game.board = state_data['board']
-    temp_game.bar = state_data['bar']
-    temp_game.off = state_data['off']
-    temp_game.turn = state_data['turn']
-    temp_game.dice = state_data['dice']
+    async with ai_lock:
+        print(f"Server is calculating AI move...")
+        temp_game = BackgammonLogic()
+        temp_game.board = state_data['board']
+        temp_game.bar = state_data['bar']
+        temp_game.off = state_data['off']
+        temp_game.turn = state_data['turn']
+        temp_game.dice = state_data['dice']
 
-    match difficulty:
-        case "easy":
-            chosen_model = None
-        case "medium":
-            chosen_model = ai_model_medium
-        case "hard":
-            chosen_model = ai_model_hard
-
-    best_move = calculate_best_move(temp_game, chosen_model)
-
-    await sio.emit('ai_move_response', {'move': best_move}, to=sid)
+        match difficulty:
+            case "easy":
+                chosen_model = None
+            case "medium":
+                chosen_model = ai_model_medium
+            case "hard":
+                chosen_model = ai_model_hard
+        try:
+            best_move = await asyncio.to_thread(calculate_best_move, temp_game, chosen_model)
+            await sio.emit('ai_move_response', {'move': best_move}, to=sid)
+        except Exception as e:
+            print(f"[{sid}] Error during AI calculation: {e}")
+            await sio.emit('ai_move_response', {'move': None}, to=sid)
 
 @sio.event
 async def make_move(sid, data):
     if sid not in players: return
     p_info = players[sid]
     game = games[p_info['room']]
+    if not game: return
+    try:
+        print(f"[{p_info.get('color')}] sent move: {data['start']} -> {data['target']}")
 
-    print(f"[{p_info.get('color')}] sent move: {data['start']} -> {data['target']}")
+        if game.turn == p_info.get('color'):
+            game.move_piece(data['start'], data['target'], data['used_dice'])
+            print(f"Move executed on the server!")
+            await sio.emit('game_state_update', get_game_state(game), room=p_info['room'])
+        else:
+            print(f"Move denied! It is not players's {p_info.get('color')} turn")
 
-    if game.turn == p_info.get('color'):
-        game.move_piece(data['start'], data['target'], data['used_dice'])
-        print(f"Move executed on the server! Sending new game state to the players...")
-        await sio.emit('game_state_update', get_game_state(game), room=p_info['room'])
-    else:
-        print(f"Move denied! It is not players's {p_info.get('color')} turn")
+        if game.game_over:
+            await process_game_end(p_info['room'], game)
 
-    if game.game_over:
-        await process_game_end(p_info['room'], game)
+    except Exception as e:
+        print(f"CRITICAL LOGIC ERROR in make_move: {e}")
+        if game:
+            await sio.emit('game_state_update', get_game_state(game), room=p_info['room'])
 
 @sio.event
 async def end_turn(sid):
