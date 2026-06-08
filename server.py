@@ -165,6 +165,11 @@ async def login_account(sid, data):
             if not bcrypt.checkpw(password.encode('utf-8'), db_hashed_pwd.encode('utf-8')):
                 await sio.emit('auth_error', {'message': 'Wrong email or password!'}, to=sid)
                 return
+            # updating the token in the db
+            current_token = connected_users[sid]['token']
+            cursor.execute("UPDATE users SET device_token = CAST(%s AS uuid) WHERE id = %s", (current_token, db_id))
+            conn.commit()
+
             connected_users[sid] = {
                 'token': connected_users[sid]['token'],
                 'username': db_username,
