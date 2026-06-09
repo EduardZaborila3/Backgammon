@@ -1,22 +1,8 @@
-import torch
-import torch.nn as nn
 import random
-
-class TDGammonNetwork(nn.Module):
-    def __init__(self):
-        super(TDGammonNetwork, self).__init__()
-        self.hidden = nn.Sequential(
-            nn.Linear(198, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        return self.hidden(x)
+import numpy as np
 
 def get_board_vector(game, player_id):
-    """Transforms the game state in a tensor for the server."""
+    """Transforms the game state in a standard list for ONNX"""
     board_features = []
     for i in range(24):
         actual_index = i if player_id == 1 else 23 - i
@@ -46,10 +32,10 @@ def get_board_vector(game, player_id):
     board_features.append(1.0 if game.turn == player_id else 0.0)
     board_features.append(1.0 if game.turn != player_id else 0.0)
 
-    return torch.FloatTensor(board_features)
+    return board_features
 
 def calculate_best_move(game, model):
-    """Find the best move using nn"""
+    """Find the best move using ONNX inference"""
     possible_moves = []
     current_player = game.turn
 
@@ -71,22 +57,21 @@ def calculate_best_move(game, model):
     if model is None:
         return random.choice(possible_moves)
 
-    board_tensors = []
+    board_lists = []
     valid_moves_list = []
 
     for start, target, path in possible_moves:
         cloned_game = game.clone_state()
         cloned_game.move_piece(start, target, path)
 
-        board_tensors.append(get_board_vector(cloned_game, current_player))
+        board_lists.append(get_board_vector(cloned_game, current_player))
         valid_moves_list.append((start, target, path))
 
-    if not board_tensors:
+    if not board_lists:
         return random.choice(possible_moves)
 
-    batch_tensor = torch.stack(board_tensors)
-    with torch.no_grad():
-        values = model(batch_tensor).squeeze(1)
-
-    best_index = torch.argmax(values).item()
+    batch_array = np.array(board_lists, dtype=np.float32)
+    ort_inputs = {model.get_inputs()[0].name: batch_array}
+    values = model.run(None, ort_inputs)[0]
+    best_index = np.argmax(values)
     return valid_moves_list[best_index]

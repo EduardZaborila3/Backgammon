@@ -3,17 +3,14 @@ import psycopg2
 import socketio
 from aiohttp import web
 from dotenv import load_dotenv
-
-import ai
 from logic import BackgammonLogic
 import uuid
-from ai import TDGammonNetwork, calculate_best_move
-import torch
+from ai import calculate_best_move
+import onnxruntime as ort
 import asyncio
 import random
 import bcrypt
 
-torch.set_num_threads(1)
 ai_lock = asyncio.Lock()
 
 load_dotenv()
@@ -39,20 +36,16 @@ waiting_player = None
 games = {}
 players = {}
 
-ai_model_medium = TDGammonNetwork()
 try:
-    ai_model_medium.load_state_dict(torch.load("models/ai_20000.pth", weights_only=True))
-    ai_model_medium.eval()
-    print("Medium AI Model (20k) loaded successfully!")
+    ai_model_medium = ort.InferenceSession("models/ai_20000.onnx")
+    print("Medium AI Model (20k) ONNX loaded successfully!")
 except Exception as e:
     print(f"Error loading medium AI model: {e}")
     ai_model_medium = None
 
-ai_model_hard = TDGammonNetwork()
 try:
-    ai_model_hard.load_state_dict(torch.load("models/ai_100000.pth", weights_only=True))
-    ai_model_hard.eval()
-    print("Hard AI Model (100k) loaded successfully!")
+    ai_model_hard = ort.InferenceSession("models/ai_100000.onnx")
+    print("Hard AI Model (100k) ONNX loaded successfully!")
 except Exception as e:
     print(f"Error loading hard AI model: {e}")
     ai_model_hard = None
