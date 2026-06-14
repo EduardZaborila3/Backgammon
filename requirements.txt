@@ -4,3 +4,4 @@ numpy
 onnxruntime
 psycopg2-binary
 python-dotenv
+bcrypt
