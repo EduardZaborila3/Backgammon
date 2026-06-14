@@ -3,3 +3,4 @@ python-socketio
 numpy
 onnxruntime
 psycopg2-binary
+python-dotenv
