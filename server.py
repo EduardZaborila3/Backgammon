@@ -422,10 +422,14 @@ async def request_ai_move(sid, state_data):
         match difficulty:
             case "easy":
                 chosen_model = None
+                model_name = "Easy"
             case "medium":
                 chosen_model = ai_model_medium
+                model_name = "Medium"
             case "hard":
                 chosen_model = ai_model_hard
+                model_name = "Hard"
+        print(f"[{sid}] AI Difficulty: {difficulty} -> Using: {model_name}", flush=True)
         try:
             best_move = await asyncio.to_thread(calculate_best_move, temp_game, chosen_model)
             await sio.emit('ai_move_response', {'move': best_move}, to=sid)
