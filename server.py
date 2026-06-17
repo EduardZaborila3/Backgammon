@@ -185,8 +185,9 @@ async def register_account(sid, data):
         await sio.emit('profile_data_update', stats, to=sid)
         await sio.emit('auth_success', {'token': token, 'message': 'Account successfully created!'}, to=sid)
     except Exception as e:
-        print(f"Register error: {e}")
-        await sio.emit('auth_error', {'message': 'Register error. Already used email?'}, to=sid)
+        print(f"Register error: {e}", flush=True)
+        error_message = str(e)
+        await sio.emit('auth_error', {'message': f'Register failed: {error_message}'}, to=sid)
         return
 
 async def login_account(sid, data):
@@ -210,8 +211,9 @@ async def login_account(sid, data):
             await sio.emit('profile_data_update', stats, to=sid)
             await sio.emit('auth_success', {'token': token, 'message': 'Logged in successfully!'}, to=sid)
     except Exception as e:
-        print(f"Login error: {e}")
-        await sio.emit('auth_error', {'message': 'Wrong email or password!'}, to=sid)
+        print(f"Login error: {e}", flush=True)
+        error_message = str(e)
+        await sio.emit('auth_error', {'message': f'Login error: {error_message}'}, to=sid)
 
 @sio.event
 async def register_credentials(sid, data):
