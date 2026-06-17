@@ -78,7 +78,7 @@ def fetch_users_stats(user_id):
     try:
         conn.rollback()
         with conn.cursor() as cursor:
-            cursor.execute("SELECT username, games_played, games_won, email FROM users WHERE id=%s", (user_id,))
+            cursor.execute("SELECT username, games_played, games_won, email FROM users WHERE id=%s::uuid", (user_id,))
             row = cursor.fetchone()
             if row:
                 return{
@@ -142,6 +142,8 @@ async def guest_login(sid):
             })
             await sio.emit('profile_data_update', stats, to=sid)
             await sio.emit('auth_success', {'token': token, 'message': 'New Guest account created!'}, to=sid)
+        else:
+            await sio.emit('auth_error', {'message': 'Database sync error. Please click Play as Guest again.'}, to=sid)
     except Exception as e:
         await sio.emit('auth_error', {'message': str(e)}, to=sid)
 
