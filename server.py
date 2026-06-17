@@ -9,7 +9,7 @@ from ai import calculate_best_move
 import onnxruntime as ort
 import asyncio
 import random
-from supabase import create_async_client, AsyncClient
+from supabase import create_client, Client
 
 ai_lock = asyncio.Lock()
 
@@ -20,10 +20,8 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_ROLE = os.environ.get("SUPABASE_SERVICE_ROLE")
 
-supabase: AsyncClient = create_async_client(SUPABASE_URL, SUPABASE_KEY)
-supabase_admin: AsyncClient = create_async_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
-
-
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase_admin: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 def get_db_connection():
     try:
