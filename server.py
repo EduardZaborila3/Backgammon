@@ -76,6 +76,7 @@ def get_game_state(game):
 def fetch_users_stats(user_id):
     """Receives the public data of the user based on Supabase Auth ID"""
     try:
+        conn.rollback()
         with conn.cursor() as cursor:
             cursor.execute("SELECT username, games_played, games_won, email FROM users WHERE id=%s", (user_id,))
             row = cursor.fetchone()
@@ -122,8 +123,13 @@ async def guest_login(sid):
         res = await asyncio.to_thread(supabase.auth.sign_in_anonymously)
         token = res.session.access_token
         user_id = res.user.id
-        await asyncio.sleep(0.5)
-        stats = await asyncio.to_thread(fetch_users_stats, user_id)
+
+        stats = None
+        for _ in range(4):
+            await asyncio.sleep(0.5)
+            stats = await asyncio.to_thread(fetch_users_stats, user_id)
+            if stats:
+                break
 
         if stats:
             connected_users[sid].update({
@@ -158,8 +164,13 @@ async def register_account(sid, data):
         token = res.session.access_token
         user_id = res.user.id
 
-        await asyncio.sleep(0.5)
-        stats = await asyncio.to_thread(fetch_users_stats, user_id)
+        stats = None
+        for _ in range(4):
+            await asyncio.sleep(0.5)
+            stats = await asyncio.to_thread(fetch_users_stats, user_id)
+            if stats:
+                break
+
         connected_users[sid].update({
             'token': token,
             'id': user_id,
