@@ -44,15 +44,15 @@ games = {}
 players = {}
 
 try:
-    ai_model_medium = ort.InferenceSession("models/ai_20000.onnx")
-    print("Medium AI Model (20k) ONNX loaded successfully!")
+    ai_model_medium = ort.InferenceSession("models/ai_500000.onnx")
+    print("Medium AI Model (500k) ONNX loaded successfully!")
 except Exception as e:
     print(f"Error loading medium AI model: {e}")
     ai_model_medium = None
 
 try:
-    ai_model_hard = ort.InferenceSession("models/ai_100000.onnx")
-    print("Hard AI Model (100k) ONNX loaded successfully!")
+    ai_model_hard = ort.InferenceSession("models/ai_1500000.onnx")
+    print("Hard AI Model (1.5M) ONNX loaded successfully!")
 except Exception as e:
     print(f"Error loading hard AI model: {e}")
     ai_model_hard = None
