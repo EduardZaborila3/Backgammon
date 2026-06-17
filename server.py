@@ -224,7 +224,11 @@ async def register_credentials(sid, data):
     user_id = connected_users[sid].get('id')
     if not email or not password or not user_id: return
     try:
-        await asyncio.to_thread(supabase_admin.auth.admin.update_user_by_id, user_id, attributes={'email': email, 'password': password})
+        await asyncio.to_thread(supabase_admin.auth.admin.update_user_by_id, user_id, attributes={
+            'email': email,
+            'password': password,
+            'email_confirm': True
+        })
         active_conn = get_db_connection()
         if active_conn:
             with conn.cursor() as cursor:
