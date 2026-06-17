@@ -223,10 +223,13 @@ async def register_credentials(sid, data):
     user_id = connected_users[sid].get('id')
     if not email or not password or not user_id: return
     try:
-        await asyncio.to_thread(supabase_admin.auth.admin.update_user_by_id, user_id, email=email, password=password)
-        with conn.cursor() as cursor:
-            cursor.execute("UPDATE users SET email=%s WHERE id=%s", (email, user_id))
-            conn.commit()
+        await asyncio.to_thread(supabase_admin.auth.admin.update_user_by_id, user_id, attributes={'email': email, 'password': password})
+        active_conn = get_db_connection()
+        if active_conn:
+            with conn.cursor() as cursor:
+                cursor.execute('UPDATE users SET email=%s where id=%s::uuid', (email, user_id))
+                active_conn.commit()
+                active_conn.close()
         connected_users[sid]['has_credentials'] = True
         stats = {
             'username': connected_users[sid]['username'],
@@ -237,7 +240,7 @@ async def register_credentials(sid, data):
         await sio.emit('profile_data_update', stats, to=sid)
         print(f"[{sid}] successfully update credentials!")
     except Exception as e:
-        print(f"Error saving credentials: {e}")
+        print(f"Error saving credentials: {e}", flush=True)
 
 @sio.event
 async def db_update_username(sid, data):
