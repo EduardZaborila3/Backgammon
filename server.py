@@ -45,16 +45,16 @@ players = {}
 
 try:
     ai_model_medium = ort.InferenceSession("models/ai_500000.onnx")
-    print("Medium AI Model (500k) ONNX loaded successfully!")
+    print("Medium AI Model (500k) ONNX loaded successfully!", flush=True)
 except Exception as e:
-    print(f"Error loading medium AI model: {e}")
+    print(f"Error loading medium AI model: {e}", flush=True)
     ai_model_medium = None
 
 try:
     ai_model_hard = ort.InferenceSession("models/ai_1500000.onnx")
-    print("Hard AI Model (1.5M) ONNX loaded successfully!")
+    print("Hard AI Model (1.5M) ONNX loaded successfully!", flush=True)
 except Exception as e:
-    print(f"Error loading hard AI model: {e}")
+    print(f"Error loading hard AI model: {e}", flush=True)
     ai_model_hard = None
 
 def get_game_state(game):
@@ -94,7 +94,7 @@ def fetch_users_stats(user_id):
 
 @sio.event
 async def connect(sid, environ, auth):
-    print(f"[{sid}] connected tot the server")
+    print(f"[{sid}] connected tot the server", flush=True)
     connected_users[sid] = {'token': None, 'username': 'Guest', 'id': None, 'games_played': 0, 'games_won': 0, 'has_credentials': False}
     if auth and 'token' in auth:
         token = auth['token']
@@ -111,10 +111,10 @@ async def connect(sid, environ, auth):
                     'games_won': stats['games_won'],
                     'has_credentials': stats['has_credentials']
                 })
-                print(f"[{sid}] connected automatically as {stats['username']}")
+                print(f"[{sid}] connected automatically as {stats['username']}", flush=True)
                 await sio.emit('profile_data_update', stats, to=sid)
         except Exception as e:
-            print(f"[{sid}] Invalid token: {e}")
+            print(f"[{sid}] Invalid token: {e}", flush=True)
 
 @sio.event
 async def guest_login(sid):
