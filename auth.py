@@ -1,8 +1,5 @@
 import os
 import json
-import uuid
-
-PROFILE_FILE = "profile.json"
 
 def get_app_data_dir():
     """Finds the AppData directory and creates a folder for the game"""
@@ -17,28 +14,27 @@ def get_token_path():
     """Returns the path to the token file"""
     return os.path.join(get_app_data_dir(), "profile.json")
 
-def get_or_create_device_token():
-    """Checks if the user already has a profile saved on the device. If it doesn't, the app generates a unique token and saves it."""
-    file_path = os.path.join(get_app_data_dir(), "profile.json")
+def get_saved_token():
+    """Reads and reuturns the Supabase token if exsits, otherwise returns None"""
+    file_path = get_token_path()
     if os.path.exists(file_path):
         try:
             with open(file_path, "r") as f:
                 data = json.load(f)
-                return data.get('device_token')
+                return data.get('supabase_token')
         except Exception as e:
             print(f"Error while reading token: {e}")
 
-    new_token = str(uuid.uuid4())
-    with open(file_path, "w") as f:
-        json.dump({"device_token": new_token}, f)
+    return None
 
-    return new_token
-
-def is_new_player():
-    """Checks the existance of the file in the path"""
-    if os.path.exists(PROFILE_FILE):
-        return False
-    return True
+def save_token(token):
+    """Saves the Supabase JWT token to the local file after a successful login/register"""
+    file_path = get_token_path()
+    try:
+        with open(file_path, "w") as f:
+            json.dump({"supabase_token": token}, f)
+    except Exception as e:
+        print(f"Error while saving token: {e}")
 
 def delete_local_token():
     """Deletes the expired/invalid local token file"""

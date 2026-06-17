@@ -1,3 +1,4 @@
+from torch.fx.passes.infra.pass_manager import pass_result_wrapper
 import os
 import psycopg2
 import socketio
@@ -9,12 +10,21 @@ from ai import calculate_best_move
 import onnxruntime as ort
 import asyncio
 import random
-import bcrypt
+from supabase import create_async_client, AsyncClient
 
 ai_lock = asyncio.Lock()
 
 load_dotenv()
 connected_users = {}
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY")
+SUPABASE_SERVICE_ROLE = os.environ.get("SUPABASE_SERVICE_ROLE")
+
+supabase: AsyncClient = create_async_client(SUPABASE_URL, SUPABASE_KEY)
+supabase_admin: AsyncClient = create_async_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
+
+
 
 def get_db_connection():
     try:
@@ -66,148 +76,154 @@ def get_game_state(game):
         'has_rolled': game.has_rolled
     }
 
-def db_authenticate_user(token, is_new_guest=False):
-    """Searches the token in the database. If the token exists, then the user is free to play the game.
-     If the token can't be found in the database, this means a new user has to be created."""
+def fetch_users_stats(user_id):
+    """Receives the public data of the user based on Supabase Auth ID"""
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT id, username, games_played, games_won, email FROM users WHERE device_token = CAST(%s AS uuid)", (token,))
+            cursor.execute("SELECT username, games_played, games_won, email FROM users WHERE id=%s", (user_id,))
             row = cursor.fetchone()
-
             if row:
-                username = row[1] if row[1] else f"Guest_{row[0]}"
-                games_played = row[2] if row[2] is not None else 0
-                games_won = row[3] if row[3] is not None else 0
-                if row[4]:
-                    has_credentials = True
-                else:
-                    has_credentials = False
-                print(f"User {username} is online!")
-                return {'id': row[0], 'username': username, 'games_played': games_played, 'games_won': games_won, 'has_credentials': has_credentials}
-            else:
-                if is_new_guest:
-                    cursor.execute("INSERT INTO users (device_token) VALUES (CAST(%s AS uuid)) RETURNING id", (token,))
-                    new_user = cursor.fetchone()
-                    new_id = new_user[0]
-                    new_username = f"Guest_{new_id}"
-                    cursor.execute("UPDATE users SET username = %s where id = %s", (new_username, new_id))
-                    conn.commit()
-                    print(f"Created new user in the database: ID {new_id}")
-                    return {'id': new_id, 'username': new_username, 'games_played': 0, 'games_won': 0,
-                            'has_credentials': False}
-                else:
-                    return None
-    except Exception as err:
-        print(f"Database authentication error: {err}")
+                return{
+                    'username': row[0],
+                    'games_played': row[1],
+                    'games_won': row[2],
+                    'has_credentials': True if row[3] else False
+                }
+            return None
+    except Exception as e:
+        print(f"Error fetching stats: {e}")
         return None
 
+@sio.event
+async def connect(sid, environ, auth):
+    print(f"[{sid}] connected tot the server")
+    connected_users[sid] = {'token': None, 'username': 'Guest', 'id': None, 'games_played': 0, 'games_won': 0, 'has_credentials': False}
+    if auth and 'token' in auth:
+        token = auth['token']
+        try:
+            res = await asyncio.to_thread(supabase.auth.get_user, token)
+            user_id = res.user.id
+            stats = await asyncio.to_thread(fetch_users_stats, user_id)
+            if stats:
+                connected_users[sid].update({
+                    'token': token,
+                    'id': user_id,
+                    'username': stats['username'],
+                    'games_played': stats['games_played'],
+                    'games_won': stats['games_won'],
+                    'has_credentials': stats['has_credentials']
+                })
+                print(f"[{sid}] connected automatically as {stats['username']}")
+                await sio.emit('profile_data_update', stats, to=sid)
+        except Exception as e:
+            print(f"[{sid}] Invalid token: {e}")
+
+@sio.event
+async def guest_login(sid):
+    """Creates an anonymous account in Supabase (Play as Guest)"""
+    try:
+        res = await asyncio.to_thread(supabase.auth.sign_in_anonymously)
+        token = res.session.access_token
+        user_id = res.user.id
+        await asyncio.sleep(0.5)
+        stats = await asyncio.to_thread(fetch_users_stats, user_id)
+
+        if stats:
+            connected_users[sid].update({
+                'token': token,
+                'id': user_id,
+                'username': stats['username'],
+                'games_played': 0,
+                'games_won': 0,
+                'has_credentials': False
+            })
+            await sio.emit('profile_data_update', stats, to=sid)
+            await sio.emit('auth_success', {'token': token, 'message': 'New Guest account created!'}, to=sid)
+    except Exception as e:
+        await sio.emit('auth_error', {'message': str(e)}, to=sid)
 
 @sio.event
 async def register_account(sid, data):
-    """Creates a new account"""
     username = data.get('username')
     email = data.get('email')
     password = data.get('password')
-    token = data.get('device_token')
 
     if not username or not email or not password:
         await sio.emit('auth_error', {'message': 'Fill in all fields!'}, to=sid)
         return
 
-    hashed_pwd = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
     try:
-        with conn.cursor() as cursor:
-            conn.commit()
-            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
-            if cursor.fetchone():
-                await sio.emit('auth_error', {'message': 'An account with this email already exists!'}, to=sid)
-                return
-            cursor.execute("UPDATE users SET username=%s, email = %s, password_hash = %s WHERE device_token = CAST(%s AS uuid)",
-                           (username, email, hashed_pwd, token))
-            conn.commit()
-            connected_users[sid]['username'] = username
-            connected_users[sid]['has_credentials'] = True
-        await sio.emit('profile_data_update', {
-            'username': connected_users[sid]['username'],
-            'games_played': connected_users[sid]['games_played'],
-            'games_won': connected_users[sid]['games_won'],
+        res = await asyncio.to_thread(supabase.auth.sign_up, {
+            "email": email,
+            "password": password,
+            "options": {"data": {"username": username}}
+        })
+        token = res.session.access_token
+        user_id = res.user.id
+
+        await asyncio.sleep(0.5)
+        stats = await asyncio.to_thread(fetch_users_stats, user_id)
+        connected_users[sid].update({
+            'token': token,
+            'id': user_id,
+            'username': stats['username'],
+            'games_played': 0,
+            'games_won': 0,
             'has_credentials': True
-        }, to=sid)
-        await sio.emit('auth_success', {'message': 'Account successfully created!'}, to=sid)
+        })
+
+        await sio.emit('profile_data_update', stats, to=sid)
+        await sio.emit('auth_success', {'token': token, 'message': 'Account successfully created!'}, to=sid)
     except Exception as e:
         print(f"Register error: {e}")
-        await sio.emit('auth_error', {'message': 'Server error.'}, to=sid)
+        await sio.emit('auth_error', {'message': 'Register error. Already used email?'}, to=sid)
+        return
 
-
-@sio.event
 async def login_account(sid, data):
     email = data.get('email')
     password = data.get('password')
 
     try:
-        with conn.cursor() as cursor:
-            conn.commit()
-            cursor.execute("SELECT id, username, games_played, games_won, password_hash FROM users WHERE email = %s",
-                           (email,))
-            row = cursor.fetchone()
-            if not row:
-                await sio.emit('auth_error', {'message': 'Wrong email or password!'}, to=sid)
-                return
-            db_id, db_username, db_played, db_won, db_hashed_pwd = row
-            if not bcrypt.checkpw(password.encode('utf-8'), db_hashed_pwd.encode('utf-8')):
-                await sio.emit('auth_error', {'message': 'Wrong email or password!'}, to=sid)
-                return
-            # updating the token in the db
-            current_token = connected_users[sid]['token']
-            cursor.execute("UPDATE users SET device_token = CAST(%s AS uuid) WHERE id = %s", (current_token, db_id))
-            conn.commit()
-
-            connected_users[sid] = {
-                'token': connected_users[sid]['token'],
-                'username': db_username,
-                'id': db_id,
-                'games_played': db_played,
-                'games_won': db_won,
+        res = await asyncio.to_thread(supabase.auth.sign_in_with_password, {"email": email, "password": password})
+        token = res.session.access_token
+        user_id = res.user.id
+        stats = await asyncio.to_thread(fetch_users_stats, user_id)
+        if stats:
+            connected_users[sid].update({
+                'token': token,
+                'id': user_id,
+                'username': stats['username'],
+                'games_played': stats['games_played'],
+                'games_won': stats['games_won'],
                 'has_credentials': True
-            }
-            await sio.emit('profile_data_update', {
-                'username': db_username,
-                'games_played': db_played,
-                'games_won': db_won,
-                'has_credentials': True
-            }, to=sid)
-            await sio.emit('auth_success', {'message': 'Logged in successfully!'}, to=sid)
-
+            })
+            await sio.emit('profile_data_update', stats, to=sid)
+            await sio.emit('auth_success', {'token': token, 'message': 'Logged in successfully!'}, to=sid)
     except Exception as e:
         print(f"Login error: {e}")
-        await sio.emit('auth_error', {'message': 'Server error.'}, to=sid)
+        await sio.emit('auth_error', {'message': 'Wrong email or password!'}, to=sid)
 
 @sio.event
 async def register_credentials(sid, data):
-    """Saves the user's email and password to the database"""
-    if sid not in connected_users:
-        return
+    if sid not in connected_users: return
     email = data.get('email')
     password = data.get('password')
     user_id = connected_users[sid].get('id')
-    if not email or not password:
-        return
-
-    hashed_pwd = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
+    if not email or not password or not user_id: return
     try:
+        await asyncio.to_thread(supabase_admin.auth.admin.update_user_by_id, user_id, email=email, password=password)
         with conn.cursor() as cursor:
-            cursor.execute("UPDATE users SET email = %s, password_hash = %s WHERE id = %s", (email, hashed_pwd, user_id))
-        conn.commit()
+            cursor.execute("UPDATE users SET email=%s WHERE id=%s", (email, user_id))
+            conn.commit()
         connected_users[sid]['has_credentials'] = True
-        await sio.emit('profile_data_update', {
+        stats = {
             'username': connected_users[sid]['username'],
             'games_played': connected_users[sid]['games_played'],
             'games_won': connected_users[sid]['games_won'],
             'has_credentials': True
-        }, to=sid)
-        print(f"[{sid}] successfully saved credentials (Email: {email}).")
+        }
+        await sio.emit('profile_data_update', stats, to=sid)
+        print(f"[{sid}] successfully update credentials!")
     except Exception as e:
         print(f"Error saving credentials: {e}")
 
@@ -272,48 +288,6 @@ async def process_game_end(room_id, game, disconnected_sid=None):
                     'games_played': connected_users[p_sid]['games_played'],
                     'games_won': connected_users[p_sid]['games_won']
                 }, to=p_sid)
-
-@sio.event
-async def connect(sid, environ, auth):
-    if not auth or 'device_token' not in auth:
-        print(f"[{sid}] Connection rejected: No device token provided")
-        raise socketio.exceptions.ConnectionRefusedError('Missing token')
-    token = auth['device_token']
-    if auth.get('action') == 'login':
-        connected_users[sid] = {'token': token, 'username': 'Pending...', 'id': None}
-        return
-    is_new_guest = auth.get('is_new_guest', False)
-    user_already_online = False
-    for active_sid, data in connected_users.items():
-        if data.get('token') == token:
-            user_already_online = True
-            break
-
-    if user_already_online:
-        raise socketio.exceptions.ConnectionRefusedError('Account already active')
-
-    user_data = await asyncio.to_thread(db_authenticate_user, token, is_new_guest)
-
-    if not user_data:
-        raise socketio.exceptions.ConnectionRefusedError('Token invalid')
-
-    connected_users[sid] = {
-        'token': token,
-        'username': user_data['username'],
-        'id': user_data['id'],
-        'games_played': user_data['games_played'],
-        'games_won': user_data['games_won'],
-        'has_credentials': user_data.get('has_credentials', False)
-    }
-
-    await sio.emit('profile_data_update', {
-        'username': user_data['username'],
-        'games_played': user_data['games_played'],
-        'games_won': user_data['games_won'],
-        'has_credentials': user_data.get('has_credentials', False)
-    }, to=sid)
-
-    print(f"[{sid}] Authenticated successfully!")
 
 @sio.event
 async def disconnect(sid):
