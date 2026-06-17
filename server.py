@@ -190,6 +190,7 @@ async def register_account(sid, data):
         await sio.emit('auth_error', {'message': f'Register failed: {error_message}'}, to=sid)
         return
 
+@sio.event
 async def login_account(sid, data):
     email = data.get('email')
     password = data.get('password')
