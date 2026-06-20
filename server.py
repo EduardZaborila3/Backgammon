@@ -147,7 +147,13 @@ async def connect(sid, environ, auth):
                 print(f"[{sid}] connected automatically as {stats['username']}", flush=True)
                 await sio.emit('profile_data_update', stats, to=sid)
         except Exception as e:
-            print(f"[{sid}] Invalid token: {e}", flush=True)
+            error_msg = str(e)
+            if "expired" in error_msg.lower():
+                print(f"[{sid}] Token expired. User needs to re-authenticate.", flush=True)
+                await sio.emit('auth_error', {'message': 'Your session has expired. Please log in again.'}, to=sid)
+            else:
+                print(f"[{sid}] Invalid token: {e}", flush=True)
+                await sio.emit('auth_error', {'message': 'Authentication failed. Please re-login.'}, to=sid)
 
 @sio.event
 async def guest_login(sid):
