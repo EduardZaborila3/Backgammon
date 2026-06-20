@@ -92,6 +92,35 @@ def fetch_users_stats(user_id):
         print(f"Error fetching stats: {e}")
         return None
 
+def ensure_user_record_exists(user_id, username=None):
+    """Ensures a user record exists in the users table. Creates one if it doesn't exist."""
+    try:
+        conn.rollback()
+        with conn.cursor() as cursor:
+            # Check if user exists
+            cursor.execute("SELECT id FROM users WHERE id=%s::uuid", (user_id,))
+            if not cursor.fetchone():
+                # User doesn't exist, create a record with default values
+                # If no username provided, try to get it from Supabase auth metadata
+                if not username:
+                    try:
+                        user = supabase_admin.auth.admin.get_user(user_id)
+                        username = user.user_metadata.get('username', f"User_{str(user_id)[:8]}")
+                    except:
+                        username = f"User_{str(user_id)[:8]}"
+
+                cursor.execute(
+                    "INSERT INTO users (id, username, games_played, games_won, email) VALUES (%s::uuid, %s, 0, 0, NULL)",
+                    (user_id, username)
+                )
+                conn.commit()
+                print(f"Created new user record for {user_id} with username: {username}")
+                return True
+        return True
+    except Exception as e:
+        print(f"Error ensuring user record exists: {e}")
+        return False
+
 @sio.event
 async def connect(sid, environ, auth):
     print(f"[{sid}] connected tot the server", flush=True)
@@ -101,6 +130,10 @@ async def connect(sid, environ, auth):
         try:
             res = await asyncio.to_thread(supabase.auth.get_user, token)
             user_id = res.user.id
+
+            # Ensure user record exists in the users table
+            await asyncio.to_thread(ensure_user_record_exists, user_id)
+
             stats = await asyncio.to_thread(fetch_users_stats, user_id)
             if stats:
                 connected_users[sid].update({
@@ -123,6 +156,9 @@ async def guest_login(sid):
         res = await asyncio.to_thread(supabase.auth.sign_in_anonymously)
         token = res.session.access_token
         user_id = res.user.id
+
+        # Ensure user record exists in the users table
+        await asyncio.to_thread(ensure_user_record_exists, user_id)
 
         stats = None
         for _ in range(4):
@@ -166,6 +202,9 @@ async def register_account(sid, data):
         token = res.session.access_token
         user_id = res.user.id
 
+        # Ensure user record exists in the users table
+        await asyncio.to_thread(ensure_user_record_exists, user_id, username)
+
         stats = None
         for _ in range(4):
             await asyncio.sleep(0.5)
@@ -176,13 +215,18 @@ async def register_account(sid, data):
         connected_users[sid].update({
             'token': token,
             'id': user_id,
-            'username': stats['username'],
+            'username': stats['username'] if stats else username,
             'games_played': 0,
             'games_won': 0,
             'has_credentials': True
         })
 
-        await sio.emit('profile_data_update', stats, to=sid)
+        await sio.emit('profile_data_update', stats if stats else {
+            'username': username,
+            'games_played': 0,
+            'games_won': 0,
+            'has_credentials': True
+        }, to=sid)
         await sio.emit('auth_success', {'token': token, 'message': 'Account successfully created!'}, to=sid)
     except Exception as e:
         print(f"Register error: {e}", flush=True)
@@ -199,6 +243,10 @@ async def login_account(sid, data):
         res = await asyncio.to_thread(supabase.auth.sign_in_with_password, {"email": email, "password": password})
         token = res.session.access_token
         user_id = res.user.id
+
+        # Ensure user record exists in the users table
+        await asyncio.to_thread(ensure_user_record_exists, user_id)
+
         stats = await asyncio.to_thread(fetch_users_stats, user_id)
         if stats:
             connected_users[sid].update({
