@@ -15,6 +15,7 @@ ai_lock = asyncio.Lock()
 
 load_dotenv()
 connected_users = {}
+matchmaking_queue = []
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY")
@@ -105,9 +106,9 @@ def ensure_user_record_exists(user_id, username=None):
                 if not username:
                     try:
                         user = supabase_admin.auth.admin.get_user(user_id)
-                        username = user.user_metadata.get('username', f"User_{str(user_id)[:8]}")
+                        username = user.user_metadata.get('username', f"Guest_{str(user_id)[:6]}")
                     except:
-                        username = f"User_{str(user_id)[:8]}"
+                        username = f"Guest_{str(user_id)[:6]}"
 
                 cursor.execute(
                     "INSERT INTO users (id, username, games_played, games_won, email) VALUES (%s::uuid, %s, 0, 0, NULL)",
@@ -365,12 +366,10 @@ async def process_game_end(room_id, game, disconnected_sid=None):
 
 @sio.event
 async def disconnect(sid):
-    global waiting_player
+    global matchmaking_queue
     print(f"[{sid}] disconnected from the server.")
 
-    if waiting_player == sid:
-        waiting_player = None
-
+    matchmaking_queue = [p for p in matchmaking_queue if p['sid'] != sid]
     if sid in connected_users:
         del connected_users[sid]
 
@@ -387,47 +386,59 @@ async def disconnect(sid):
         del players[sid]
 
 @sio.event
+async def cancel_matchmaking(sid):
+    global matchmaking_queue
+    initial_length = len(matchmaking_queue)
+    matchmaking_queue = [p for p in matchmaking_queue if p['sid'] != sid]
+    if len(matchmaking_queue) < initial_length:
+        print(f"[{sid}] left the matchmaking queue")
+        await sio.emit('matchmaking_cancelled', to=sid)
+
+@sio.event
 async def join_matchmaking(sid):
-    global waiting_player
-
-    if waiting_player is None:
-        waiting_player = sid
-        print(f"[{sid}] is waiting for an opponent...")
+    player_data = connected_users[sid]
+    games_played = player_data['games_played']
+    games_won = player_data['games_won']
+    player_wr = (games_won / games_played) * 100
+    if not matchmaking_queue:
+        matchmaking_queue.append({'sid': sid, 'wr': player_wr})
+        print(f"{player_data['username']} joined the matchmaking queue. WR: {player_wr}")
         await sio.emit('Waiting for opponent...', to=sid)
+        return
+    if any(p['sid'] == sid for p in matchmaking_queue):
+        return
+    best_match = min(matchmaking_queue, key=lambda opp: abs(opp['wr'] - player_wr))
+    matchmaking_queue.remove(best_match)
+
+    room_id = str(uuid.uuid4())
+    p1_sid = best_match['sid']
+    p2_sid = sid
+
+    await sio.enter_room(p1_sid, room_id)
+    await sio.enter_room(p2_sid, room_id)
+
+    games[room_id] = BackgammonLogic()
+    p1_color = random.choice([0, 1])
+    p2_color = 1 - p1_color
+    players[p1_sid] = {'room': room_id, 'color': p1_color}
+    players[p2_sid] = {'room': room_id, 'color': p2_color}
+    print(f"Game started between [{p1_sid}] and [{p2_sid}] in room {room_id}.")
+    print(f"[{p1_sid}] is color {p1_color}, [{p2_sid}] is color {p2_color}.")
+
+    p1_username = connected_users[p1_sid]['username']
+    p2_username = connected_users[p2_sid]['username']
+    if p1_color == 0:
+        p0_name = p1_username
+        p1_name = p2_username
     else:
-        if waiting_player == sid:
-            return
+        p0_name = p2_username
+        p1_name = p1_username
 
-        room_id = str(uuid.uuid4())
-        p1_sid = waiting_player
-        p2_sid = sid
-        waiting_player = None
+    await sio.emit('assign_player', {'player_id': p1_color, 'p0_name': p0_name, 'p1_name': p1_name}, to=p1_sid)
+    await sio.emit('assign_player', {'player_id': p2_color, 'p0_name': p0_name, 'p1_name': p1_name}, to=p2_sid)
 
-        await sio.enter_room(p1_sid, room_id)
-        await sio.enter_room(p2_sid, room_id)
-
-        games[room_id] = BackgammonLogic()
-        p1_color = random.choice([0, 1])
-        p2_color = 1 - p1_color
-        players[p1_sid] = {'room': room_id, 'color': p1_color}
-        players[p2_sid] = {'room': room_id, 'color': p2_color}
-        print(f"Game started between [{p1_sid}] and [{p2_sid}] in room {room_id}.")
-        print(f"[{p1_sid}] is color {p1_color}, [{p2_sid}] is color {p2_color}.")
-
-        p1_username = connected_users[p1_sid]['username']
-        p2_username = connected_users[p2_sid]['username']
-        if p1_color == 0:
-            p0_name = p1_username
-            p1_name = p2_username
-        else:
-            p0_name = p2_username
-            p1_name = p1_username
-
-        await sio.emit('assign_player', {'player_id': p1_color, 'p0_name': p0_name, 'p1_name': p1_name}, to=p1_sid)
-        await sio.emit('assign_player', {'player_id': p2_color, 'p0_name': p0_name, 'p1_name': p1_name}, to=p2_sid)
-
-        state = get_game_state(games[room_id])
-        await sio.emit('game_state_update', state, room=room_id)
+    state = get_game_state(games[room_id])
+    await sio.emit('game_state_update', state, room=room_id)
 
 @sio.event
 async def roll_dice(sid):
