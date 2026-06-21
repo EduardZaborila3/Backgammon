@@ -642,7 +642,7 @@ async def skip_turn_closed_board(sid):
 async def save_game(sid, data):
     """Saves the game state to the cloud using an UPSERT query"""
     if sid not in connected_users: return
-    user_id = connected_users[sid]
+    user_id = connected_users[sid].get('id')
 
     if not user_id:
         await sio.emit('save_game_response', {'success': False, 'message': 'User not authenticated'}, to=sid)
