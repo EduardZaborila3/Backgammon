@@ -9,6 +9,7 @@ from ai import calculate_best_move
 import onnxruntime as ort
 import asyncio
 import random
+import json
 from supabase import create_client, Client
 
 ai_lock = asyncio.Lock()
@@ -636,6 +637,65 @@ async def skip_turn_closed_board(sid):
             game.dice = []
             game.switch_turn()
             await sio.emit('game_state_update', get_game_state(game), room=p_info['room'])
+
+@sio.event
+async def save_game(sid, data):
+    """Saves the game state to the cloud using an UPSERT query"""
+    if sid not in connected_users: return
+    user_id = connected_users[sid]
+
+    if not user_id:
+        await sio.emit('save_game_response', {'success': False, 'message': 'User not authenticated'}, to=sid)
+        return
+
+    game_state = data.get('state')
+    if not game_state: return
+    try:
+        active_conn = get_db_connection()
+        if active_conn:
+            with active_conn.cursor() as cursor:
+                query = """INSERT INTO saved_games(user_id, game_state, updated_at) VALUES
+                (%s::uuid, %s::jsonb, now())
+                ON CONFLICT (user_id)
+                DO UPDATE SET game_state = EXCLUDED.game_state, updated_at = now();
+                """
+                cursor.execute(query, (user_id, json.dumps(game_state)))
+                active_conn.commit()
+                active_conn.close()
+        await sio.emit('save_game_response', {'success': True, 'message': 'Game successfully saved in the database!'}, to=sid)
+        print(f"[{sid}] Saved game state to cloud database.")
+    except Exception as e:
+        print(f"[{sid}] Error saving game: {e}")
+        await sio.emit('save_game_response', {'success': False, 'message': str(e)}, to=sid)
+
+@sio.event
+async def load_game(sid):
+    """Retrieves the game state from the database"""
+    if sid not in connected_users: return
+    user_id = connected_users[sid].get('id')
+    if not user_id:
+        await sio.emit('load_game_response', {'success': False, 'message': 'User not authenticated'}, to=sid)
+        return
+    try:
+        active_conn = get_db_connection()
+        game_state = None
+        if active_conn:
+            with active_conn.cursor() as cursor:
+                cursor.execute("SELECT game_state FROM saved_games WHERE user_id = %s::uuid", (user_id,))
+                row = cursor.fetchone()
+                if row:
+                    game_state = row[0]
+            active_conn.close()
+
+        if game_state:
+            await sio.emit('load_game_response', {'success': True, 'state': game_state}, to=sid)
+            print(f"[{sid}] Loaded game from cloud.")
+        else:
+            await sio.emit('load_game_response', {'success': False, 'message': 'No saved game found in the cloud.'},
+                           to=sid)
+    except Exception as e:
+        print(f"Error loading game: {e}")
+        await sio.emit('load_game_response', {'success': False, 'message': str(e)}, to=sid)
 
 if __name__ == '__main__':
     # print("Server started on port 5555...")
